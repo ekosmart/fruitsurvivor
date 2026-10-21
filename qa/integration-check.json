@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "parsedScripts": 2,
+  "islands": 29,
+  "enemyRenderVariants": 116,
+  "imageDraws": 726,
+  "animatedFrameDraws": 5,
+  "resizeSizes": 3,
+  "legacyRendererForms": [
+    "normal",
+    "dragon",
+    "zoan"
+  ],
+  "transitions": [
+    7,
+    28
+  ],
+  "fruits": 73,
+  "controls": [
+    "basic cooldown",
+    "ultimate cooldown",
+    "fruit swap cooldown protection",
+    "pause freezes cooldown",
+    "paused damage blocked",
+    "independent multi-touch release",
+    "normalized movement",
+    "all fruit ultimates"
+  ],
+  "browserVisualQA": "Not performed: local file URL blocked by browser policy",
+  "note": "VM smoke test checks renderer integration and finite atlas rectangles; visual browser QA is separate."
+}

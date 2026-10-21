@@ -1,0 +1,55 @@
+{
+  "kind": "sprite-gen-image-report",
+  "provider": "codex",
+  "prompt": "Create one original full-body chibi pirate adventurer game character, clean premium hand-painted cartoon 2D RPG sprite, crisp dark navy outlines, simple bold readable forms, subtle cel shading. Three-quarter front view facing slightly RIGHT. Big expressive head, dark navy tricorn hat with gold piping and small ivory skull emblem, tousled dark hair, warm tan face, confident grin, scar under left eye, red long coat with gold trim over cream shirt, teal waist sash, dark trousers, sturdy brown boots, one curved silver cutlass held low at right side. Two feet visible, both hands visible, no missing limbs. Compact cute heroic proportions 2.5 heads tall. Neutral standing idle pose ready for a top-down adventure. Consistent lighting from upper left. Entire hat, boots and sword inside canvas, generous padding. One character only, no scene, no lettering, no border, no ground shadow. Genuine transparent background.",
+  "out": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\hero\\pirate-base.png",
+  "raw": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\hero\\pirate-base.png.raw.png",
+  "raw_bytes": 1276702,
+  "elapsed_seconds": 100.583,
+  "model": null,
+  "session_id": "01a15964-904f-7571-bed2-15b0fad20a53",
+  "refs": [],
+  "transparent": true,
+  "alpha": {
+    "strategy": "native",
+    "strategy_source": "provider-default",
+    "out": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\hero\\pirate-base.png",
+    "mode": "RGBA",
+    "method": "native",
+    "size": "1229x1280",
+    "alpha_zero_pct": 64.74,
+    "partial_alpha_pct": 35.19,
+    "opaque_pct": 0.06,
+    "cleaned_transparent_rgb_pixels": 632,
+    "stale_transparent_rgb_pixels": 0
+  },
+  "chroma": null,
+  "extra": {
+    "inline_results": 1,
+    "rollout_cleaned": true,
+    "transparent_background_reported": true,
+    "trim_alpha": {
+      "bbox": [
+        62,
+        35,
+        1041,
+        1246
+      ],
+      "before": [
+        1229,
+        1280
+      ],
+      "after": [
+        979,
+        1211
+      ],
+      "margin_px": {
+        "left": 62,
+        "top": 35,
+        "right": 188,
+        "bottom": 34
+      }
+    }
+  },
+  "provider_resolved_from": "explicit"
+}

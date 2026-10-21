@@ -1,0 +1,25 @@
+{
+  "kind": "sprite-gen-image-report",
+  "provider": "codex",
+  "prompt": "Draw an animation strip of exactly 4 full-body versions of the pirate in reference 1, in one horizontal row.\nReference 1 controls costume, face and painted cartoon style. Reference 2 controls layout and blank space. Reference 3 controls the LEG POSES: match those diagrams, one diagram per pirate.\nThis is a FRONT-FACING march toward the viewer. Torso and BOTH knees face the camera. The head can retain the slight right-facing tilt from the original. In the first pose, the foot on the LEFT SIDE OF THE IMAGE is forward and lower. The foot on the RIGHT SIDE OF THE IMAGE is behind and higher. In the third pose this is reversed. Second and fourth poses have close feet and alternate lifted knees.\nVisually match the BLUE and ORANGE legs in the diagram but paint the actual pants dark and boots brown. Do not copy the reference pirate's original legs into these frames. Redraw the lower body to follow each diagram. Show two legs and two feet per character. Frame one and frame three must NOT have the same silhouette or same forward boot.\nMaintain the same hat, face, red coat, teal sash, cutlass held low and body scale in every frame. Same top-left lighting. Keep all characters separate and fully inside their slots with 12px padding. Pure flat #00FF00 background, no shadows, no text, no diagram lines. Original costume colors only; no blue or orange guide legs.\nOutput the single 4-pose strip only.",
+  "out": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\raw\\walk.png",
+  "raw": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\raw\\walk.png.raw.png",
+  "raw_bytes": 2037603,
+  "elapsed_seconds": 119.824,
+  "model": null,
+  "session_id": "01a15977-90c1-7931-afa4-629acc7f97c1",
+  "refs": [
+    "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\base-source.png",
+    "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\references\\layout-guides\\walk.png",
+    "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\references\\walk-motion-guide.png"
+  ],
+  "transparent": false,
+  "alpha": null,
+  "chroma": null,
+  "extra": {
+    "inline_results": 1,
+    "rollout_cleaned": true,
+    "transparent_background_reported": false
+  },
+  "provider_resolved_from": "explicit"
+}

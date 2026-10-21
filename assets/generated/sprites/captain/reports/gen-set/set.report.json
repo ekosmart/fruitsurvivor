@@ -1,0 +1,25 @@
+{
+  "kind": "sprite-gen-gen-set-report",
+  "run_dir": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain",
+  "states": [
+    "walk"
+  ],
+  "ok": 1,
+  "failed": [],
+  "not_started": [],
+  "items": [
+    {
+      "state": "walk",
+      "out": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\raw\\walk.png",
+      "report": "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\reports\\gen-set\\walk.json",
+      "refs": [
+        "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\base-source.png",
+        "C:\\Users\\Eko Priha\\Downloads\\Pirate Fruite Adventure\\assets\\generated\\sprites\\captain\\references\\layout-guides\\walk.png"
+      ],
+      "provider": "codex",
+      "provider_resolved_from": "explicit",
+      "elapsed_seconds": 99.5,
+      "ok": true
+    }
+  ]
+}

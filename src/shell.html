@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Pirate Fruits Adventure</title>
+    <style>
+        body {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+
+        html, body, #gameContainer {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            border-radius: 0;
+            box-shadow: none;
+            background: transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            border-radius: 0;
+            background: transparent;
+        }
+
+        #ui {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            color: white;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            pointer-events: none;
+            font-size: 16px;
+            line-height: 1.4;
+        }
+
+        #controls {
+            position: absolute;
+            bottom: 15px;
+            left: 15px;
+            color: white;
+            font-size: 14px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+            z-index: 100;
+            pointer-events: none;
+            background: rgba(0,0,0,0.3);
+            padding: 8px 12px;
+            border-radius: 8px;
+        }
+
+        #islandInfo {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            color: white;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            z-index: 100;
+            pointer-events: none;
+            font-size: 16px;
+            text-align: right;
+        }
+
+        /* Shop UI */
+        #shopOverlay {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.6);
+            z-index: 500;
+            pointer-events: auto;
+        }
+
+        #shopBox {
+            width: 640px;
+            background: linear-gradient(180deg,#111,#222);
+            border: 3px solid #c59a00;
+            border-radius: 12px;
+            padding: 18px;
+            color: white;
+            text-align: left;
+            box-shadow: 0 0 30px rgba(200,160,40,0.4);
+            font-weight: bold;
+        }
+
+        .shopTitle { font-size: 22px; margin-bottom: 10px; display:flex; align-items:center; gap:10px }
+        .shopItems { display:flex; gap:12px; margin-top:8px }
+        .shopItem { flex:1; background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; position:relative }
+        .shopItem .price { position:absolute; top:8px; right:8px; font-size:14px }
+        .affordable { color:#7CFC00 } /* green */
+        .notAffordable { color:#FF5555 } /* red */
+
+        /* Gacha visuals */
+        #gachaPreview { display:flex; gap:14px; align-items:center }
+        .gachaRing { width:140px; height:140px; border-radius:50%; border:6px solid #d4af37; display:flex; align-items:center; justify-content:center; position:relative; box-shadow:0 0 18px rgba(212,175,55,0.6) }
+        .gachaRing.spin { animation: spinRing 1s linear infinite }
+        @keyframes spinRing { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+        .sparkle { position:absolute; width:8px; height:8px; background: #fff7b2; border-radius:50%; box-shadow:0 0 8px #fff7b2 }
+        .fruitPreview { width:64px; height:64px; border-radius:12px; box-shadow:0 0 12px rgba(0,0,0,0.6) }
+
+        /* Damage boost aura */
+        .damageAura { position:absolute; left:-6px; top:-6px; right:-6px; bottom:-6px; border-radius:50%; pointer-events:none; box-shadow: 0 0 24px rgba(255,100,100,0.6) }
+
+@@VOYAGE_CSS@@
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="1200" height="800"></canvas>
+        <div id="ui">
+            <div>⚔️ Level: <span id="level">1</span></div>
+            <div>❤️ HP: <span id="hp">100</span>/<span id="maxHp">100</span></div>
+            <div>⭐ XP: <span id="xp">0</span>/<span id="maxXp">100</span></div>
+            <div>🍎 Buah: <span id="fruit">Tidak Ada</span></div>
+            <div>🔖 Tipe: <span id="fruitType">-</span></div>
+            <div>🏷️ Rarity: <span id="fruitRarity">-</span></div>
+            <div>⏳ Transform: <span id="transformTimer">0</span>s</div>
+            <div>💰 Gold: <span id="gold">0</span></div>
+        </div>
+        <!-- Inventory Overlay -->
+        <div id="inventoryOverlay" style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; z-index:600;">
+            <div style="width:900px; background:linear-gradient(180deg,#111,#1a1a1a); border:3px solid #c59a00; padding:18px; border-radius:12px; color:white;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                    <div style="font-size:20px; font-weight:bold;">🎒 Inventory</div>
+                    <div style="font-size:14px;">Tekan I untuk tutup</div>
+                </div>
+                <div id="inventoryGrid" style="display:grid; grid-template-columns:repeat(12,64px); grid-template-rows:repeat(5,64px); gap:8px; background:rgba(255,255,255,0.03); padding:10px; border-radius:8px;">
+                    <!-- slots generated by JS -->
+                </div>
+                <div style="margin-top:12px; display:flex; gap:12px; align-items:center; justify-content:flex-end;">
+                    <div style="font-size:14px">Gold: <span id="invGold">0</span></div>
+                    <button id="closeInventoryBtn" style="background:#c59a00; color:#111; padding:8px 12px; border-radius:8px; border:none; font-weight:bold; cursor:pointer;">Close</button>
+                </div>
+            </div>
+        </div>
+        <div id="controls">
+            <strong>Kontrol:</strong><br>
+            WASD: Gerak | Klik Kiri: Serang Pedang | Klik Kanan: Skill Buah | E: Ambil Item/Portal
+        </div>
+        <div id="islandInfo">
+            <div>🏝️ <span id="islandName">Pulau Pemula</span></div>
+            <div>👹 Musuh: <span id="enemyCount">0</span></div>
+        </div>
+        <!-- Shop overlay -->
+        <div id="shopOverlay">
+            <div id="shopBox">
+                <div class="shopTitle">🏪 Toko Bajak Laut Lengkap <button id="shopClose" aria-label="Tutup toko">×</button></div>
+                <div style="font-size:13px;opacity:0.95">Ketuk item atau tekan 1/2/3 untuk membeli. Indikator hijau = bisa beli, merah = tidak cukup gold.</div>
+                <div class="shopItems">
+                    <div class="shopItem" data-id="1">
+                        <div style="font-size:16px">1. Gacha Buah Iblis</div>
+                        <div style="font-size:13px;opacity:0.9">Harga: <span class="price">200</span> Gold</div>
+                        <div style="margin-top:8px;font-size:13px">Buah acak dengan kekuatan unik. Buah boss didapat dari mengalahkan boss.</div>
+                    </div>
+                    <div class="shopItem" data-id="2">
+                        <div style="font-size:16px">2. Ramuan Kesehatan</div>
+                        <div style="font-size:13px;opacity:0.9">Harga: <span class="price">50</span> Gold</div>
+                        <div style="margin-top:8px;font-size:13px">Pulihkan 50 HP instan.</div>
+                    </div>
+                    <div class="shopItem" data-id="3">
+                        <div style="font-size:16px">3. Peningkat Serangan</div>
+                        <div style="font-size:13px;opacity:0.9">Harga: <span class="price">150</span> Gold</div>
+                        <div style="margin-top:8px;font-size:13px">Tambahkan +10 damage permanen.</div>
+                    </div>
+                </div>
+
+                <div style="margin-top:12px;display:flex;gap:18px;align-items:center;">
+                    <div id="gachaPreview">
+                        <div class="gachaRing" id="gachaRing">
+                            <div id="gachaSparkles"></div>
+                            <div id="fruitPreview" class="fruitPreview" style="background:#444"></div>
+                        </div>
+                    </div>
+                    <div style="flex:1">
+                        <div id="shopMessage" style="min-height:40px;font-size:14px;opacity:0.95">Selamat datang di Toko Bajak Laut!</div>
+                        <div style="margin-top:8px;font-size:12px;opacity:0.85">Kontrol: B = buka/tutup | 1 = Gacha (harga tergantung level) | 2 = Potion (50) | 3 = +Damage (150)</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+@@VOYAGE_UI@@
+<script id="pirate-art-data" type="application/json">@@ART@@</script>
+<script id="pirate-hero-data" type="application/json">@@HERO@@</script>
+<script>@@ART_RUNTIME@@</script>
+    <script>@@GAME@@</script>
+
+    
+</body>
+</html>

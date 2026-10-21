@@ -1,0 +1,12 @@
+{
+  "name": "pirate-fruit-adventure",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Offline pirate adventure PWA",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "node tools/build-pwa.mjs",
+    "preview": "node tools/serve.mjs",
+    "test": "node tools/verify-reworked-ultimates.mjs && node tools/verify-pwa.mjs"
+  }
+}

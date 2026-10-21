@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "kind": "sprite-gen-request",
+  "engine": "component-row",
+  "character": {
+    "id": "captain",
+    "description": "Original chibi pirate captain, navy tricorn hat gold piping skull, red coat, cream shirt, teal sash, dark pants, brown boots, silver cutlass. Three-quarter front view facing slightly right, keep full body and all accessories visible.",
+    "base_image": "base-source.png"
+  },
+  "cell": {
+    "shape": "square",
+    "width": 192,
+    "height": 192,
+    "safe_margin_x": 12,
+    "safe_margin_y": 12,
+    "size": 192,
+    "safe_margin": 12
+  },
+  "chroma_key": {
+    "name": "green",
+    "hex": "#00FF00",
+    "rgb": [
+      0,
+      255,
+      0
+    ],
+    "selection": "manual"
+  },
+  "states": {
+    "idle": {
+      "frames": 4,
+      "fps": 4,
+      "loop": true,
+      "action": "Same three-quarter front view facing slightly RIGHT throughout. Subtle breathing idle loop: relaxed, inhale, relaxed, exhale. Both feet stay planted in identical positions and sword is held down. Preserve identical character size, hat, face, red coat and teal sash. No detached effects or ground shadows."
+    },
+    "walk": {
+      "frames": 4,
+      "fps": 8,
+      "loop": true,
+      "action": "CORRECT A FAILED WALK: do NOT draw the same extended right-side boot four times. Make FOUR VERY DIFFERENT leg silhouettes in a cyclic walk in place. Maintain the same three-quarter-front slightly-right-facing camera and pirate design. Frame 1: far leg (leg on viewer LEFT) swings FORWARD, its boot planted in front; near leg (viewer RIGHT) sweeps BACK with bent knee. Frame 2: feet CLOSE TOGETHER under pelvis, near knee lifted while far foot supports weight. Frame 3: REVERSE frame 1 legs: near leg (viewer RIGHT) extended FORWARD with heel planted; far leg (viewer LEFT) bends BACK. Frame 4: feet CLOSE TOGETHER under pelvis, far knee lifted while near foot supports weight. Frame 1 and frame 3 must be obviously opposite leg phases. Frame 2 and frame 4 are narrow passing poses, NOT wide striding poses. Arms counter-swing, hat and head consistent. Keep sword down and full body. Never duplicate any pose. No dust, shadows, scenery or detached effects."
+    }
+  },
+  "style": "Clean hand-painted cartoon RPG sprite, smooth cel shading, crisp dark outlines. Not pixel art.",
+  "layout": "taxonomy/v1",
+  "fit": {
+    "resample": "lanczos",
+    "align_x": "bbox-center",
+    "align_y": "bottom",
+    "ground_frames": true,
+    "pixel_unfake": false
+  },
+  "chroma": {
+    "mode": "rgb",
+    "unmix_reach": 4,
+    "spill_max_fraction": 0.005
+  }
+}

@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {reset} from './verify-reference-ultimates.mjs';
+import {run,advance} from './verify-game.mjs';
+function step(ms){for(let left=ms;left>0;left-=20){advance(Math.min(left,20));run('for(const a of specialAttacks){if(!a.finished){a.update();a.draw(ctx);}}');}}
+function cast(key){reset(key);run('Voyage.castUltimate()');assert.equal(run('specialAttacks.length'),1);assert.equal(run('specialAttacks[0].key'),key);}
+const checks=[];
+for(const key of run('Object.keys(ReworkedUltimates.specs)')){
+ cast(key);assert.equal(run('projectiles.length'),0,key+' no projectile substitution');
+ const cooldown=run('player._ultimateDuration');
+ assert.equal(run('Voyage.castUltimate()'),false,key+' blocks duplicate');
+ step(5000);
+ assert.ok(run('specialAttacks[0].finished'),key+' completes');
+ assert.equal(run('!!player._ultimateMotion'),false,key+' releases movement');
+ assert.equal(run('!!player._ultimateGuard'),false,key+' releases protection');
+ assert.equal(run('Voyage.castUltimate()'),false,key+' cooldown still active');
+ assert.ok(run('specialAttacks[0].totalDamage>0'),key+' actually damages enemies');
+ checks.push({fruit:key,cooldown,name:run('FruitArt.profile(player.fruit).ultimate')});
+}
+cast('QUETZALCOATL');const before=run('Math.hypot(enemies[0].x-700,enemies[0].y-500)');step(1200);
+assert.ok(run('Math.hypot(enemies[0].x-700,enemies[0].y-500)')<=before,'Serpent pulls toward center');
+const poisonedHP=run('enemies[0].hp');step(400);assert.ok(run('enemies[0].hp')<poisonedHP,'Serpent poison ticks');
+cast('PHOENIX');run('player.hp=40');step(1200);
+assert.ok(run('Math.hypot(player.x-700,player.y-500)')<1,'Phoenix lands at chosen target');
+step(3000);assert.ok(run('player.hp')>40,'Phoenix ash heals');
+cast('SABERTOOTH');step(450);assert.ok(run('player.x')>600,'Sabertooth pounces');
+const clawHP=run('enemies[0].hp');step(1000);assert.ok(run('enemies[0].hp')<clawHP,'Claw/bite combo deals damage');
+cast('TRICERATOPS');run('player.takeDamage(40)');assert.equal(run('player.hp'),86,'65 percent charge damage reduction');
+step(1400);assert.ok(run('player.x')>700,'Triceratops physically charges');
+assert.ok(run('specialAttacks[0].hit.size')>0,'Charge hits enemies along swept path');
+cast('DRAGON');run('enemies.push(new Enemy(450,500,0));enemies[enemies.length-1].hp=100000');step(2000);
+assert.equal(run('enemies[enemies.length-1].hp'),100000,'Breath does not hit behind caster');
+const breathHP=run('enemies[0].hp');step(1200);assert.ok(run('enemies[0].hp')<breathHP,'Scorched ground continues damage');
+cast('AZURE_DRAGON');step(2500);assert.ok(run('enemies.some(e=>e.stunned>0)'),'Dragon descent stuns');
+cast('KIRIN');run('player.hp=40');step(1000);
+assert.ok(run('player.x')>700,'Kirin performs real dash');assert.equal(run('player.hp'),50,'Kirin arrival heals ten percent');
+assert.ok(run('specialAttacks[0].trail.length')>4,'Kirin leaves a persistent trail');
+reset('ORIGIN');run(`player.hp=40;player.burning=100;player.frozen=80;enemies[0].burning=120;enemies[0].stunned=75;
+projectiles.push(new Projectile(650,500,Math.PI,5,20,'red','basic',enemies[0]));
+projectiles.push(new Projectile(650,500,0,5,20,'blue','basic',player));Voyage.castUltimate();`);step(300);
+assert.equal(run('player.hp'),75);assert.equal(run('player.burning'),0);assert.equal(run('player.frozen'),0);
+assert.equal(run('enemies[0].burning'),120);assert.equal(run('enemies[0].stunned'),75);
+assert.equal(run('projectiles.length'),1);assert.equal(run('projectiles[0].owner===player'),true,'Origin preserves friendly shots');
+cast('KIRIN');step(300);const position=run('JSON.stringify([player.x,player.y])');run('Voyage.menu()');step(1500);
+assert.equal(run('JSON.stringify([player.x,player.y])'),position,'Dash freezes while paused');run('Voyage.start()');step(2400);
+assert.equal(run('!!player._ultimateMotion'),false,'Dash resumes and completes');
+cast('TRICERATOPS');step(500);run('player.changeIsland(1)');
+assert.equal(run('!!player._ultimateMotion'),false);assert.equal(run('!!player._ultimateGuard'),false);assert.equal(run('specialAttacks.length'),0);
+cast('KIRIN');run('player.x=GAME_WIDTH-30;player.y=GAME_HEIGHT-30;ReworkedUltimates.cancel(player);player._ultimateReadyAt=0;mouse.x=GAME_WIDTH+500;mouse.y=GAME_HEIGHT+500;Voyage.castUltimate()');step(1400);
+assert.ok(run('player.x<=GAME_WIDTH-player.radius&&player.y<=GAME_HEIGHT-player.radius'),'Dash respects world bounds');
+fs.writeFileSync('qa/reworked-ultimates.json',JSON.stringify({ok:true,fruits:checks,checks:['phase damage','real movement','guard cleanup','poison','healing','swept charge hits','directional breath','lingering ground damage','lightning stun','player-only cleanse','hostile projectile purge','pause/resume','island cleanup','world boundaries']},null,2));
+console.log('Eight ultimate reworks: all mechanic and lifecycle checks passed.');

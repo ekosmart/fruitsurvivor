@@ -1,0 +1,46 @@
+<div id="voyageHUD" hidden>
+  <aside id="captainPanel" class="glass">
+    <button id="statusToggle" aria-expanded="true" aria-label="Ringkas status pemain"><span class="avatar-medallion"><img class="captain-image" alt=""></span><span><small>YOUR CAPTAIN</small><strong>Captain <em id="hudLevel">01</em></strong></span><span class="collapse-mark">−</span></button>
+    <div class="status-details">
+      <div class="xp-label"><span>PROGRES LEVEL</span><span id="hudXP">0 / 100</span></div>
+      <div class="xp-track"><span id="xpFill"></span></div>
+      <div class="stat-pair"><span>BOUNTY COINS</span><strong><i class="coin-dot"></i><span id="hudGold">0</span></strong></div>
+      <button id="equippedFruit" class="equipped-fruit"><img id="hudFruitIcon" alt=""><span><small>DEVIL FRUIT</small><strong id="hudFruitName">Belum ada buah</strong><em id="hudRarity">Temukan kekuatanmu</em></span></button>
+      <div class="panel-tools"><button id="inventoryButton" title="Inventory (I)">Tas <span>I</span></button><button id="shopButton" title="Toko (B)">Toko <span>B</span></button></div>
+    </div>
+  </aside>
+  <div class="voyage-location glass"><small>THE GRAND ARCHIPELAGO</small><strong id="hudIsland">Pulau Pemula</strong><span><i></i><b id="hudEnemies">25</b> musuh tersisa</span></div>
+  <button id="menuButton" class="glass round-button" aria-label="Buka menu dan jeda">Ⅱ</button>
+  <div id="joystick" role="application" aria-label="Joystick arah, seret untuk bergerak"><span class="stick-cross horizontal"></span><span class="stick-cross vertical"></span><span id="joystickKnob"></span><small>MOVE</small></div>
+  <div id="combatControls">
+    <button id="interactButton" class="interact-button">Ambil / Portal <kbd>E</kbd></button>
+    <div class="combat-row">
+      <button id="attackButton" class="combat-button attack" aria-label="Basic Attack"><span class="cooldown-shade"></span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M13 34L33 8l7-1-1 8-24 22M9 29l12 12M14 35l-6 7" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg><strong>ATTACK</strong><span id="attackCooldown" class="cooldown-text">SIAP</span><kbd>SPACE</kbd></button>
+      <button id="ultimateButton" class="combat-button ultimate" aria-label="Skill Ultimate"><span class="cooldown-shade"></span><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M26 5L10 27h12l-1 16 17-24H26z" fill="currentColor"/></svg><strong>ULTIMATE</strong><span id="ultimateCooldown" class="cooldown-text">SIAP</span><kbd>Q</kbd></button>
+    </div>
+    <span id="ultimateName">Judgment Storm</span>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</div>
+<section id="mainMenu" aria-label="Menu utama">
+  <div class="menu-sea"></div><div class="map-lines"></div>
+  <header class="menu-header"><a class="brand" href="#" aria-label="Pirate Fruit Adventure"><span class="brand-mark">P<span>F</span></span><span>PIRATE FRUIT<small>A D V E N T U R E</small></span></a><span class="edition-tag">THE GRAND ARCHIPELAGO <i>✦</i> 29 ISLANDS</span></header>
+  <div class="menu-layout">
+    <div class="menu-copy"><div class="chapter-label"><span></span> YOUR VOYAGE BEGINS HERE</div><h1>Lautan luas.<br><em>Takdirmu sendiri.</em></h1><p>Jelajahi pulau misterius, temukan buah iblis,<br class="desktop-break"> dan bangkitkan kekuatan sang kapten.</p>
+      <div id="starterSection"><small>PILIH KEKUATAN PERTAMAMU</small><div class="starter-choices"><button class="starter selected" data-fruit="LIGHTNING" aria-pressed="true"><img alt=""><span>Petir<small>CHAIN STRIKE</small></span></button><button class="starter" data-fruit="ICE" aria-pressed="false"><img alt=""><span>Es<small>FREEZE AREA</small></span></button><button class="starter" data-fruit="VOLCANO" aria-pressed="false"><img alt=""><span>Magma<small>BURN BLAST</small></span></button></div></div>
+      <button id="startButton" class="primary-button"><span>Mulai petualangan</span><b>↗</b></button>
+      <div class="menu-secondary"><button id="codexButton">Ensiklopedia buah <span>↗</span></button><button id="helpButton">Cara bermain <span>↗</span></button></div>
+      <div class="menu-footnote"><span class="live-dot"></span> Touch & keyboard ready <span>•</span> Offline adventure</div>
+    </div>
+    <div class="hero-stage"><div class="compass-orbit"></div><span class="stage-number">01</span><img class="captain-image hero-art" alt="Kapten bajak laut dengan mantel merah dan pedang"><div class="captain-plaque"><small>THE ADVENTURER</small><strong>A captain. A fruit. A legend.</strong><span>Mulai dari Pulau Pemula</span></div></div>
+  </div>
+  <footer class="menu-footer"><span>EXPLORE <b>29</b> ISLANDS</span><span>ONE FRUIT. ONE ULTIMATE.</span><span>CHOOSE YOUR OWN COURSE <b>↗</b></span></footer>
+</section>
+<section id="codexModal" class="voyage-modal" hidden aria-label="Ensiklopedia buah iblis">
+  <div class="modal-sheet"><header><div><small>DEVIL FRUIT ARCHIVE</small><h2>Kenali kekuatanmu.</h2></div><button data-close-modal aria-label="Tutup ensiklopedia">✕</button></header><div class="codex-search"><input id="fruitSearch" placeholder="Cari nama buah atau kekuatan…" aria-label="Cari buah"><span id="fruitTotal"></span></div><div id="fruitGrid"></div></div>
+</section>
+<section id="helpModal" class="voyage-modal" hidden aria-label="Cara bermain">
+  <div class="modal-sheet help-sheet"><header><div><small>CAPTAIN’S HANDBOOK</small><h2>Satu arah. Satu kekuatan.</h2></div><button data-close-modal aria-label="Tutup panduan">✕</button></header>
+  <div class="help-grid"><article><b>01</b><h3>Bergerak</h3><p>Seret joystick kiri dengan satu jari. Desktop: WASD atau tombol panah. Saat memakai joystick, serangan membidik musuh terdekat.</p></article><article><b>02</b><h3>Basic Attack</h3><p>Ketuk atau tahan ATTACK. Cooldown 0,45 detik. Desktop: Space atau klik kiri. Mendekatlah ke musuh untuk mengenai tebasan.</p></article><article><b>03</b><h3>Ultimate</h3><p>Ketuk ULTIMATE untuk satu serangan spesial buahmu. Desktop: Q atau klik kanan. Angka dan lingkaran menunjukkan sisa cooldown.</p></article><article><b>04</b><h3>Jelajahi</h3><p>Dekati buah atau portal, lalu tekan Ambil / Portal (E). Buka Tas untuk memakai buah, atau Toko untuk belanja. Tombol Ⅱ membuka menu sekaligus menjeda permainan.</p></article></div>
+  </div>
+</section>

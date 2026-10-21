@@ -1,0 +1,1650 @@
+            fruitSkill() {
+                // If player's fruit is a boss-fruit, execute the mapped boss skill
+                if (this.fruit && bossFruitMap[this.fruit]) {
+                    // pass mouse world coordinates as target so boss-fruits can be aimed
+                    executeBossFruitSkill(this.fruit, mouse.x, mouse.y);
+                    return;
+                }
+
+                // Zenith UrSagar: Astral Maul (dash-chain -> final star-crack vortex)
+                if (this.fruit === 'ZENITH_URSAGAR') {
+                    // spawn the special attack controller which handles its own visuals & logic
+                    specialAttacks.push(new AstralMaulAttack(this));
+                    return;
+                }
+
+                switch (this.fruit) {
+                    case 'LIGHTNING':
+                        this.lightningSkill();
+                        break;
+                    case 'DRAGON':
+                        this.dragonSkill();
+                        break;
+                    case 'ICE':
+                        this.iceSkill();
+                        break;
+                    case 'RUBBER':
+                        // Gear 4: spawn Kong Organ controller (multiple homing haki fists)
+                        specialAttacks.push(new RubberKongOrgan(this));
+                        break;
+                    case 'JACKPOT':
+                        this.jackpotSkill();
+                        break;
+                    case 'BLACKHOLE':
+                        this.blackHoleSkill();
+                        break;
+                    case 'SHADOW':
+                        this.shadowSkill();
+                        break;
+
+                    case 'GRAVITY':
+                        this.gravitySkill();
+                        break;
+                    case 'PHOENIX':
+                        this.phoenixSkill();
+                        break;
+                    case 'SIREN':
+                        this.sirenSkill();
+                        break;
+                    case 'TIDE':
+                        this.tideSkill();
+                        break;
+                    case 'SEA_KING':
+                        this.seaKingSkill();
+                        break;
+                    case 'HELLGOD':
+                        this.hellGodSkill();
+                        break;
+                    case 'VOID_REAPER':
+                        this.voidReaperSkill();
+                        break;
+                    case 'ROSE_THORN':
+                        this.roseThornSkill();
+                        break;
+                    case 'SWORD_DEITY':
+                        this.swordDeitySkill();
+                        break;
+                    case 'MAGNETION':
+                        this.magnetionSkill();
+                        break;
+                    case 'COLOSSUS':
+                        this.colossusSkill();
+                        break;
+                    case 'MIRAGE':
+                        this.mirageSkill();
+                        break;
+                    case 'VOLCANO':
+                        this.volcanoSkill();
+                        break;
+                    case 'CELESTIAL':
+                        this.celestialSkill();
+                        break;
+                    case 'AURORA':
+                        this.auroraSkill();
+                        break;
+                    case 'QUASAR':
+                        this.quasarSkill();
+                        break;
+                    case 'SUN_GOD':
+                        this.sunGodSkill();
+                        break;
+                    case 'ORIGIN':
+                        this.originSkill();
+                        break;
+                    case 'NEBULA':
+                        this.nebulaSkill();
+                        break;
+                    case 'PRISM':
+                        this.prismSkill();
+                        break;
+                    case 'HITO_HITO_DEWI':
+                        this.hitoSkill();
+                        break;
+                    case 'HITO_MECHA':
+                        this.hitoMechaSkill();
+                        break;
+                    case 'DOLL':
+                        this.dollSkill();
+                        break;
+                    case 'SINGULARITY':
+                        this.singularitySkill();
+                        break;
+                    case 'KIRIN':
+                        this.kirinSkill();
+                        break;
+                    case 'GRIFFIN':
+                        this.griffinSkill();
+                        break;
+                    case 'GARUDA':
+                        this.garudaSkill();
+                        break;
+                    case 'FENRIR':
+                        this.fenrirSkill();
+                        break;
+                    case 'QUETZALCOATL':
+                        this.quetzalcoatlSkill();
+                        break;
+                    case 'BAKU':
+                        this.bakuSkill();
+                        break;
+                    case 'AZURE_DRAGON':
+                        this.azureDragonSkill();
+                        break;
+                    case 'BLOOM':
+                        this.bloomSkill();
+                        break;
+                    case 'ECHO':
+                        this.echoSkill();
+                        break;
+                    case 'MAMMOTH':
+                        this.mammothSkill();
+                        break;
+                    case 'SABERTOOTH':
+                        this.sabertoothSkill();
+                        break;
+                    case 'PTERODACTYL':
+                        this.pterodactylSkill();
+                        break;
+                    case 'TRICERATOPS':
+                        this.triceratopsSkill();
+                        break;
+                    case 'VELOCIRAPTOR':
+                        this.velociraptorSkill();
+                        break;
+                    case 'CAPTAIN_HOOK':
+                        // Captain Hook: Grapnel King - throws hooks that pull, smash and mark enemies
+                        specialAttacks.push(new CaptainHookAttack(this));
+                        break;
+                    case 'SERAPH':
+                        this.seraphSkill();
+                        break;
+                }
+            }
+
+            singularitySkill() {
+                // Only one singularity at a time per player
+                if (this.activeSingularity && projectiles.includes(this.activeSingularity)) {
+                    setShopMessage && setShopMessage('Singularity already active');
+                    return;
+                }
+                const s = new SingularityProjectile(this);
+                projectiles.push(s);
+                this.activeSingularity = s;
+                setShopMessage && setShopMessage('Singularity deployed');
+            }
+
+            lightningSkill() {
+                // Chain lightning: find a primary target in cursor direction, then chain to up to 10 enemies.
+                // 1) Select first enemy in a forward cone toward mouse
+                const CONE_ANGLE = 0.9; // radians wide cone
+                const CONE_DIST = 420; // max distance to look for first target
+                const dir = this.angle;
+
+                // helper to check if candidate is in cone
+                function inCone(px, py, ex, ey, dir, coneAngle, maxDist) {
+                    const dx = ex - px, dy = ey - py;
+                    const d = Math.hypot(dx, dy);
+                    if (d > maxDist) return false;
+                    const a = Math.atan2(dy, dx);
+                    const diff = Math.abs(Math.atan2(Math.sin(a - dir), Math.cos(a - dir)));
+                    return diff <= coneAngle / 2;
+                }
+
+                // find candidates in cone and sort by distance (include bosses)
+                const candidates = enemies
+                    .filter(e => inCone(this.x, this.y, e.x, e.y, dir, CONE_ANGLE, CONE_DIST))
+                    .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                    .sort((a, b) => a.d - b.d)
+                    .map(o => o.e);
+
+                if (candidates.length === 0) {
+                    // fallback: try any nearby enemy in a small radius in front
+                    const fallback = enemies
+                        .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                        .filter(o => o.d < 220)
+                        .sort((a,b)=>a.d-b.d)
+                        .map(o=>o.e);
+                    if (fallback.length === 0) return; // nothing to hit
+                    candidates.push(...fallback);
+                }
+
+                // build chain list starting from first candidate
+                const maxChain = 10;
+                const chain = [];
+                const used = new Set();
+                if (candidates.length > 0) {
+                    chain.push(candidates[0]);
+                    used.add(candidates[0]);
+                }
+
+                // chain to nearest unused enemy iteratively
+                while (chain.length < maxChain) {
+                    const last = chain[chain.length - 1];
+                    if (!last) break;
+                    let nearest = null; let nd = Infinity;
+                    enemies.forEach(en => {
+                        if (used.has(en)) return;
+                        const d = Math.hypot(en.x - last.x, en.y - last.y);
+                        if (d < nd && d < 320) { nd = d; nearest = en; }
+                    });
+                    if (!nearest) break;
+                    chain.push(nearest); used.add(nearest);
+                }
+
+                if (chain.length === 0) return;
+
+                // Create visual effects for chain lightning between points
+                for (let i = 0; i < chain.length; i++) {
+                    const srcX = (i === 0) ? this.x : chain[i-1].x;
+                    const srcY = (i === 0) ? this.y : chain[i-1].y;
+                    const tx = chain[i].x;
+                    const ty = chain[i].y;
+                    // push a lightning visual effect between src and target
+                    const seg = { x: srcX, y: srcY, targetX: tx, targetY: ty, life: 18, type: 'lightningbolt', segments: [] };
+                    const segCount = 10;
+                    const angle = Math.atan2(ty - srcY, tx - srcX);
+                    for (let s=0;s<=segCount;s++){
+                        const p = s/segCount;
+                        const bx = srcX + (tx - srcX) * p;
+                        const by = srcY + (ty - srcY) * p;
+                        const zig = (Math.random()-0.5) * 26 * (1 - Math.abs(p-0.5)*2);
+                        const perp = angle + Math.PI/2;
+                        seg.segments.push({ x: bx + Math.cos(perp)*zig, y: by + Math.sin(perp)*zig });
+                    }
+                    effects.push(seg);
+                }
+
+                // Apply damage and small stun on each in chain, show hit effect
+                chain.forEach((enemy, idx) => {
+                    try { enemy.takeDamage(computeScaledDamage(FRUITS.LIGHTNING.damage, this)); } catch(e) {}
+                    enemy.stunned = Math.max(enemy.stunned || 0, 30);
+                    effects.push({ x: enemy.x, y: enemy.y, radius: 20, life: 18, type: 'lightninghit' });
+                });
+            }
+            
+            distanceToLine(px, py, x1, y1, x2, y2) {
+                const A = px - x1;
+                const B = py - y1;
+                const C = x2 - x1;
+                const D = y2 - y1;
+                
+                const dot = A * C + B * D;
+                const lenSq = C * C + D * D;
+                let param = -1;
+                
+                if (lenSq !== 0) param = dot / lenSq;
+                
+                let xx, yy;
+                if (param < 0) {
+                    xx = x1;
+                    yy = y1;
+                } else if (param > 1) {
+                    xx = x2;
+                    yy = y2;
+                } else {
+                    xx = x1 + param * C;
+                    yy = y1 + param * D;
+                }
+                
+                const dx = px - xx;
+                const dy = py - yy;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+
+            dragonSkill() {
+                // Fire breath - stronger cone with flame particles and burn
+                const coneSpread = 0.8; // radians
+                const steps = 10;
+                for (let i = 0; i <= steps; i++) {
+                    const t = (i / steps) - 0.5; // -0.5..0.5
+                    const angleOffset = t * coneSpread;
+                    const speed = FRUITS.DRAGON.speed + Math.random() * 2;
+                    const damage = FRUITS.DRAGON.damage;
+
+                    const projectile = new Projectile(
+                        this.x + Math.cos(this.angle) * 20,
+                        this.y + Math.sin(this.angle) * 20,
+                        this.angle + angleOffset,
+                        speed,
+                        damage,
+                        FRUITS.DRAGON.color,
+                        'dragon'
+                    );
+                    // give dragon projectiles a burn flag
+                    projectile.burn = true;
+                    projectiles.push(projectile);
+                }
+
+                // Large flame effect in front of player
+                const flameEffect = {
+                    x: this.x + Math.cos(this.angle) * 80,
+                    y: this.y + Math.sin(this.angle) * 80,
+                    radius: 60,
+                    life: 20,
+                    type: 'dragonflame'
+                };
+                effects.push(flameEffect);
+            }
+
+            startDragonTransform(durationFrames = 60 * 8) { // default 8 seconds
+                this.isDragon = true;
+                this.transformTimer = durationFrames;
+                // temporary buffs while dragon (example)
+                this.damage += 15;
+                this.radius += 10;
+
+                // Visual transform effect
+                const transformEffect = {
+                    x: this.x,
+                    y: this.y,
+                    radius: 40,
+                    life: 30,
+                    type: 'dragontransform'
+                };
+                effects.push(transformEffect);
+                this.updateUI();
+            }
+
+            endDragonTransform() {
+                if (!this.isDragon) return;
+                this.isDragon = false;
+                this.damage = Math.max(5, this.damage - 15);
+                this.radius = Math.max(12, this.radius - 10);
+                const endEffect = { x: this.x, y: this.y, radius: 30, life: 30, type: 'dragonend' };
+                effects.push(endEffect);
+                this.updateUI();
+            }
+
+            iceSkill() {
+                // Create ice shard projectile with trail
+                const projectile = new IceProjectile(
+                    this.x, this.y, this.angle,
+                    FRUITS.ICE.speed,
+                    FRUITS.ICE.damage,
+                    FRUITS.ICE.color
+                );
+                projectiles.push(projectile);
+                
+                // Create ice crystals around player
+                for (let i = 0; i < 6; i++) {
+                    const crystalAngle = (i / 6) * Math.PI * 2;
+                    const crystalEffect = {
+                        x: this.x + Math.cos(crystalAngle) * 40,
+                        y: this.y + Math.sin(crystalAngle) * 40,
+                        radius: 8,
+                        life: 30,
+                        type: 'icecrystal',
+                        angle: crystalAngle,
+                        delay: i * 3
+                    };
+                    effects.push(crystalEffect);
+                }
+            }
+
+            phoenixSkill() {
+                // Fire a blue phoenix projectile that explodes into blue fire.
+                const proj = new PhoenixProjectile(
+                    this.x + Math.cos(this.angle) * 20,
+                    this.y + Math.sin(this.angle) * 20,
+                    this.angle,
+                    FRUITS.PHOENIX.speed,
+                    FRUITS.PHOENIX.damage,
+                    FRUITS.PHOENIX.color
+                );
+                projectiles.push(proj);
+
+                // Grant a short regeneration buff (e.g., 5 HP per second for 6 seconds)
+                this.regenTimer = 60 * 6; // 6 seconds
+                this.regenAmount = 5; // per second
+                spawnEffect({ x: this.x, y: this.y, text: 'Regenerasi aktif', life: 80, type: 'regenBuff' });
+            }
+
+            // cardSkill removed — CARD fruit has been disabled/removed due to stability issues
+
+            jackpotSkill() {
+                // 777 Fever: spin a flashy slot machine above player's head
+                const owner = this;
+                // show slot machine telegraph (will animate using effect.draw)
+                const slotEffect = { type: 'slotMachine', owner: owner, life: 60, spin: true, reels: [null, null, null] };
+                effects.push(slotEffect);
+
+                // Instead of fully random reels, guarantee a triple outcome chosen from a weighted set
+                // This makes the skill more rewarding: you will always get one of the triple outcomes.
+                // weights: 7 (rare), cherries (common), skull (uncommon)
+                const tripleWeights = [ {sym: '7', w: 5}, {sym: '🍒', w: 8}, {sym: '💀', w: 3} ];
+
+                function weightedPick(arr) {
+                    let total = 0; for (let it of arr) total += it.w || 1;
+                    let r = Math.random() * total;
+                    for (let it of arr) { r -= it.w || 1; if (r <= 0) return it.sym; }
+                    return arr[arr.length-1].sym;
+                }
+
+                // resolve spin after short delay to allow telegraph animation
+                setTimeout(() => {
+                    // pick which triple the spin will produce (guaranteed)
+                    const forced = weightedPick(tripleWeights);
+                    const reels = [forced, forced, forced];
+
+                    // attach result to an effect so draw can display it briefly
+                    effects.push({ type: 'slotResult', owner: owner, life: 90, reels: reels });
+
+                    // Determine if triple match (should always be true now)
+                    const triple = true;
+
+                    if (reels[0] === '7') {
+                        // JACKPOT: massive coin explosion + heavy AoE damage
+                        const cx = owner.x; const cy = owner.y;
+                        const radius = 320;
+                        effects.push({ type: 'jackpotCoinBurst', x: cx, y: cy, radius: radius, life: 48, color: '#FFD700' });
+
+                        // Damage enemies in radius heavily and spawn coins
+                        enemies.forEach(e => {
+                            if (!e || e.dead) return;
+                            const d = Math.hypot(e.x - cx, e.y - cy);
+                            if (d < radius) {
+                                try { e.takeDamage(computeScaledDamage(FRUITS.JACKPOT.damage * 5, owner)); } catch (e) {}
+                            }
+                        });
+
+                        // spawn many coin drops around player
+                        for (let i = 0; i < 28; i++) {
+                            const a = Math.random() * Math.PI * 2;
+                            const r = 24 + Math.random() * 260;
+                            const dx = cx + Math.cos(a) * r;
+                            const dy = cy + Math.sin(a) * r;
+                            const coinVal = 20 + Math.floor(Math.random() * 60);
+                            const coin = new DroppedItem(dx, dy, 'coin', coinVal);
+                            // give a short random life offset so they scatter
+                            coin.life = 600 + Math.floor(Math.random() * 300);
+                            droppedItems.push(coin);
+                        }
+
+                        setShopMessage && setShopMessage('JACKPOT! 777 — Massive Payout!');
+                    } else if (reels[0] === '🍒') {
+                        // Cherry triple: potion rain, full heal, AND fruit rain (random fruit drops)
+                        const cx = owner.x; const cy = owner.y;
+                        effects.push({ type: 'potionRain', x: cx, y: cy - 180, life: 120, color: '#FF69B4' });
+                        effects.push({ type: 'fruitRain', x: cx, y: cy - 220, life: 140, color: '#FFB7DA' });
+
+                        // spawn potion drops falling from above
+                        for (let i = 0; i < 12; i++) {
+                            const px = cx + (Math.random() - 0.5) * 360;
+                            const py = cy - 260 + Math.random() * 120;
+                            const healAmt = Math.min(60 + Math.floor(Math.random() * 60), owner.maxHp);
+                            const pot = new DroppedItem(px, py, 'potion', healAmt);
+                            droppedItems.push(pot);
+                        }
+
+                        // spawn random fruit drops (fruit rain)
+                        const fruitKeys = Object.keys(FRUITS).filter(k => FRUITS[k] && FRUITS[k].category !== 'bossfruit');
+                        // prefer mid/rare fruits by simple filter (optional): keep set as-is for variety
+                        const fruitCount = 8 + Math.floor(Math.random() * 6);
+                        for (let i = 0; i < fruitCount; i++) {
+                            const fk = fruitKeys[Math.floor(Math.random() * fruitKeys.length)];
+                            const fx = cx + (Math.random() - 0.5) * 420;
+                            const fy = cy - 300 + Math.random() * 160;
+                            const fruitDrop = new DroppedItem(fx, fy, 'fruit', fk);
+                            // slightly longer life so player has time to reach them
+                            fruitDrop.life = 1800 + Math.floor(Math.random() * 600);
+                            droppedItems.push(fruitDrop);
+                        }
+
+                        // heal player to full
+                        const healed = owner.maxHp - owner.hp;
+                        owner.hp = owner.maxHp;
+                        effects.push({ x: owner.x, y: owner.y, radius: 32, life: 40, type: 'heal' });
+                        spawnEffect({ x: owner.x, y: owner.y, text: `Full Heal! +${healed} HP`, life: 60, type: 'damage' });
+                        setShopMessage && setShopMessage('Lucky! 🍒🍒🍒 — Fruit & Potion Rain!');
+                    } else if (triple && reels[0] === '💀') {
+                        // Skull triple: black nuke that damages most enemies but also hurts the player slightly
+                        const cx = owner.x; const cy = owner.y;
+                        const nukeRadius = 380;
+                        effects.push({ type: 'blackNuke', x: cx, y: cy, radius: nukeRadius, life: 80, color: '#1a0011' });
+
+                        enemies.forEach(e => {
+                            if (!e || e.dead) return;
+                            const d = Math.hypot(e.x - cx, e.y - cy);
+                            if (d < nukeRadius) {
+                                try { e.takeDamage(computeScaledDamage(FRUITS.JACKPOT.damage * 4, owner)); } catch (err) {}
+                            }
+                        });
+
+                        // small self-damage
+                        const selfDmg = Math.max(6, Math.floor(owner.maxHp * 0.06));
+                        owner.takeDamage(selfDmg);
+                        setShopMessage && setShopMessage('Bad Roll... 💀💀💀 — Black Nuke!');
+                    } else {
+                        // No triple: small coin trickle consolation and spark
+                        const cx = owner.x; const cy = owner.y;
+                        effects.push({ type: 'slotFizzle', x: cx, y: cy, life: 36 });
+                        for (let i = 0; i < 6; i++) {
+                            const a = Math.random() * Math.PI * 2; const r = 16 + Math.random() * 120;
+                            droppedItems.push(new DroppedItem(cx + Math.cos(a) * r, cy + Math.sin(a) * r, 'coin', 6 + Math.floor(Math.random() * 12)));
+                        }
+                        setShopMessage && setShopMessage('No triple — better luck next spin.');
+                    }
+                }, 900);
+            }
+
+            mammothSkill() {
+                // Mammoth Charge: transform briefly and charge forward, huge knockback + stun
+                this.startZoanTransform(60 * 6);
+                // visual: dust trail + ground cracks
+                const chargeDist = 360;
+                const steps = 8;
+                for (let i = 1; i <= steps; i++) {
+                    const px = this.x + Math.cos(this.angle) * (i / steps) * chargeDist;
+                    const py = this.y + Math.sin(this.angle) * (i / steps) * chargeDist;
+                    effects.push({ x: px, y: py, radius: 24 + i * 4, life: 30, type: 'mammothdust', delay: i * 3 });
+                }
+                // Damage + knockback enemies along path
+                enemies.forEach(enemy => {
+                    const projLineDist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    const ang = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                    const diffAng = Math.abs(Math.atan2(Math.sin(ang - this.angle), Math.cos(ang - this.angle)));
+                    if (projLineDist < chargeDist && diffAng < 0.8) {
+                        enemy.takeDamage(computeScaledDamage(FRUITS.MAMMOTH.damage, this));
+                        enemy.x += Math.cos(this.angle) * 140;
+                        enemy.y += Math.sin(this.angle) * 140;
+                        enemy.stunned = 80;
+                    }
+                });
+                spawnEffect({ x: this.x + Math.cos(this.angle) * chargeDist, y: this.y + Math.sin(this.angle) * chargeDist, radius: 80, life: 40, type: 'mammothimpact' });
+            }
+
+            sabertoothSkill() {
+                // Sabertooth: rapid claw slashes that apply bleed
+                const swings = 5;
+                for (let i = 0; i < swings; i++) {
+                    const angle = this.angle + (Math.random() - 0.5) * 0.6;
+                    const proj = new Projectile(this.x + Math.cos(angle) * 28, this.y + Math.sin(angle) * 28, angle, FRUITS.SABERTOOTH.speed, FRUITS.SABERTOOTH.damage, FRUITS.SABERTOOTH.color, 'saberClaw');
+                    projectiles.push(proj);
+                }
+                // apply bleed: when hitting, we set enemy.burning as bleed
+                setShopMessage && setShopMessage('Feral Slash!');
+            }
+
+            pterodactylSkill() {
+                // Pterodactyl: take to the sky (temporary) and then dive for massive area damage
+                this.startZoanTransform(60 * 5);
+                // flight effect: create sky shadow indicator and then dive after short delay
+                effects.push({ x: this.x, y: this.y, radius: 40, life: 40, type: 'pteroshadow' });
+                setTimeout(() => {
+                    // dive toward cursor position
+                    const tx = mouse.x; const ty = mouse.y;
+                    const diveX = tx; const diveY = ty;
+                    effects.push({ x: diveX, y: diveY, radius: 120, life: 40, type: 'pterodive' });
+                    // damage enemies in impact
+                    enemies.forEach(enemy => {
+                        const d = Math.hypot(enemy.x - diveX, enemy.y - diveY);
+                        if (d < 140) {
+                            enemy.takeDamage(computeScaledDamage(FRUITS.PTERODACTYL.damage, this));
+                            enemy.stunned = 60;
+                        }
+                    });
+                }, 800);
+                setShopMessage && setShopMessage('Sky Dive!');
+            }
+
+            triceratopsSkill() {
+                // Triceratops: horn barrage - shoot series of piercing horn projectiles and grant armor
+                const count = 5;
+                for (let i = 0; i < count; i++) {
+                    const a = this.angle + (i - Math.floor(count/2)) * 0.06;
+                    const proj = new Projectile(this.x + Math.cos(a) * 28, this.y + Math.sin(a) * 28, a, 9, Math.floor(FRUITS.TRICERATOPS.damage * 0.8), FRUITS.TRICERATOPS.color, 'tricerahorn');
+                    proj.penetrate = true; // logical flag for piercing behavior if you later implement
+                    projectiles.push(proj);
+                }
+                // temporary armor
+                this.armor = (this.armor || 0) + 20;
+                setTimeout(() => { this.armor = Math.max(0, (this.armor || 0) - 20); }, 7000);
+                spawnEffect({ x: this.x, y: this.y, text: 'Armor +20', life: 80, type: 'powerParticle' });
+                setShopMessage && setShopMessage('Horn Barrage!');
+            }
+
+            velociraptorSkill() {
+                // Velociraptor rework: summon 5 shadow raptors that chain-pounce for 6 seconds
+                const count = 5;
+                const lifeFrames = 60 * 6; // 6 seconds
+                for (let i = 0; i < count; i++) {
+                    const ang = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+                    const rx = this.x + Math.cos(ang) * 22 + (Math.random() - 0.5) * 12;
+                    const ry = this.y + Math.sin(ang) * 22 + (Math.random() - 0.5) * 12;
+                    const raptor = {
+                        x: rx,
+                        y: ry,
+                        life: lifeFrames,
+                        maxLife: lifeFrames,
+                        type: 'raptor',
+                        state: 'seek', // seek | pounce
+                        speed: 6 + Math.random() * 4,
+                        target: null,
+                        owner: this,
+                        _pounceCd: 0,
+                        _lastHit: null
+                    };
+                    effects.push(raptor);
+                }
+                setShopMessage && setShopMessage('Pack Ambush!');
+            }
+
+            sirenSkill() {
+                // Auto-charm: find up to 4 nearest enemies and emit charm waves at their positions
+                const targets = enemies
+                    .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                    .filter(o => o.d < 300)
+                    .sort((a, b) => a.d - b.d)
+                    .slice(0, 4);
+
+                if (targets.length === 0) {
+                    // fallback: small area in front of player
+                    for (let i = 0; i < 8; i++) {
+                        const angleOffset = (i / 8 - 0.5) * 0.8;
+                        const fx = this.x + Math.cos(this.angle + angleOffset) * 120;
+                        const fy = this.y + Math.sin(this.angle + angleOffset) * 120;
+                        effects.push({ x: fx, y: fy, radius: 12, life: 20, type: 'sirenwave' });
+                    }
+                } else {
+                    targets.forEach((t, idx) => {
+                        const ex = t.e.x;
+                        const ey = t.e.y;
+                        effects.push({ x: ex, y: ey, radius: 18, life: 28, type: 'sirenwave' });
+                        // apply charm directly
+                        t.e.charmed = 60 * 3; // 3 seconds
+                        t.e.origDamage = t.e.origDamage || t.e.damage;
+                        t.e.damage = Math.max(1, Math.floor(t.e.damage * 0.6));
+                        effects.push({ x: ex, y: ey, radius: 20, life: 90, type: 'charmAura' });
+                    });
+                }
+            }
+
+            tideSkill() {
+                // Spawn a forward-moving tidal wave that travels and splashes into enemies
+                const range = 700;            // how far the wave travels
+                const speed = 10;             // movement per frame
+                const frontRadius = 80;       // collision radius of the wave front
+                const maxLife = Math.ceil(range / speed);
+
+                const wave = {
+                    x: this.x + Math.cos(this.angle) * 80,
+                    y: this.y + Math.sin(this.angle) * 80,
+                    angle: this.angle,
+                    sx: this.x, sy: this.y,
+                    speed: speed,
+                    frontRadius: frontRadius,
+                    travelled: 0,
+                    maxTravel: range,
+                    life: maxLife,
+                    maxLife: maxLife,
+                    type: 'tideWave',
+                    owner: this,
+                    _hit: []
+                };
+
+                effects.push(wave);
+
+                // small initial foam and burst
+                effects.push({ x: wave.x, y: wave.y, radius: frontRadius * 0.8, life: 28, type: 'tidalFoam', color: 'rgba(170,220,255,0.22)' });
+            }
+
+            seaKingSkill() {
+                // Grand Tsunami: sweeping straight wave that drags enemies, applies DoT while inside, then throws them away
+                const range = 1400;            // how far the tsunami travels (increased)
+                const speed = 12;              // movement per frame (fast cinematic sweep)
+                const frontRadius = 200;       // collision 'height' of the wave front (wider, stronger pull)
+                const maxLife = Math.ceil(range / speed);
+
+                const wave = {
+                    x: this.x + Math.cos(this.angle) * 96,
+                    y: this.y + Math.sin(this.angle) * 96,
+                    angle: this.angle,
+                    speed: speed,
+                    frontRadius: frontRadius,
+                    travelled: 0,
+                    maxTravel: range,
+                    life: maxLife,
+                    maxLife: maxLife,
+                    type: 'tsunamiWave',
+                    owner: this,
+                    _dotMap: new Map() // track per-enemy dot cooldowns
+                };
+
+                effects.push(wave);
+
+                // initial big foam burst for visuals
+                effects.push({ x: wave.x, y: wave.y, radius: frontRadius * 1.0, life: 36, type: 'tidalFoam', color: 'rgba(180,240,255,0.28)' });
+            }
+
+            hellGodSkill() {
+                // Amaterasu: spawn a cursed black-flame field that applies immobilize + stacking bleed
+                // field parameters
+                const fieldRadius = 140;
+                const lifeFrames = 60 * 6; // 6 seconds on ground
+
+                // spawn in front of player at aiming position (mouse) if available
+                const tx = (typeof mouse !== 'undefined' && mouse.x) ? mouse.x : this.x + Math.cos(this.angle) * 160;
+                const ty = (typeof mouse !== 'undefined' && mouse.y) ? mouse.y : this.y + Math.sin(this.angle) * 160;
+
+                const field = {
+                    x: tx,
+                    y: ty,
+                    radius: fieldRadius,
+                    life: lifeFrames,
+                    maxLife: lifeFrames,
+                    type: 'amaterasuField',
+                    owner: this,
+                    // per-enemy stack map used by the field renderer
+                    _stackMap: new Map()
+                };
+
+                effects.push(field);
+
+                // big black flare on spawn
+                effects.push({ x: tx, y: ty, radius: fieldRadius * 0.6, life: 36, type: 'lavaburn' });
+            }
+
+            roseThornSkill() {
+                // Spawn 3 layers of rose thorns: inner/middle/outer, each with 4 roses
+                const lifeFrames = 60 * 4; // 4 seconds
+                const layers = [
+                    { count: 4, orbitRadius: 32, angularSpeed: 0.28, radius: 10 },
+                    { count: 4, orbitRadius: 56, angularSpeed: -0.18, radius: 12 }, // middle layer counter-clockwise
+                    { count: 4, orbitRadius: 84, angularSpeed: 0.14, radius: 14 }
+                ];
+
+                layers.forEach((layer, li) => {
+                    for (let i = 0; i < layer.count; i++) {
+                        const ang = (i / layer.count) * Math.PI * 2;
+                        const ox = this.x + Math.cos(ang) * layer.orbitRadius;
+                        const oy = this.y + Math.sin(ang) * layer.orbitRadius;
+                        const proj = new Projectile(ox, oy, ang, 0, computeScaledDamage(FRUITS.ROSE_THORN.damage, this), FRUITS.ROSE_THORN.color, 'roseOrbit', this);
+                        proj.life = lifeFrames;
+                        proj.radius = layer.radius;
+                        proj.orbitRadius = layer.orbitRadius;
+                        proj.orbitAngle = ang + (li * 0.12); // slight phase offset per layer
+                        proj.angularSpeed = layer.angularSpeed + (i % 2 ? 0.02 : -0.02);
+                        proj.orbitOwner = this; // track owner for orbit center
+                        proj._layerIndex = li;
+                        projectiles.push(proj);
+                    }
+                });
+            }
+
+            swordDeitySkill() {
+                // Seven Heavenly Blades: spawn 7 orbiting swords that seek and chain for 5 seconds
+                const count = 7;
+                const lifeFrames = 60 * 5; // 5 seconds
+                const orbitRadius = 120; // base orbit radius
+
+                for (let i = 0; i < count; i++) {
+                    const ang = (i / count) * Math.PI * 2;
+                    const sx = this.x + Math.cos(ang) * orbitRadius;
+                    const sy = this.y + Math.sin(ang) * orbitRadius;
+                    const sword = new Projectile(sx, sy, ang, 0, computeScaledDamage(FRUITS.SWORD_DEITY.damage, this), FRUITS.SWORD_DEITY.color, 'swordDeity', this);
+                    sword.life = lifeFrames;
+                    sword.radius = 10;
+                    sword.orbitRadius = orbitRadius;
+                    sword.orbitAngle = ang;
+                    sword.angularSpeed = 0.14 + (i % 2 ? 0.02 : -0.02);
+                    sword.orbitOwner = this;
+                    sword.state = 'orbit';
+                    sword._seekTimer = 6; // frames between target searches
+                    sword._lastHit = null;
+                    projectiles.push(sword);
+                }
+            }
+
+            voidReaperSkill() {
+                // Death Harvest: spawn 3 giant shadow sickles that hit a large area and apply a Reap Mark
+                const count = 3;
+                const targetX = (typeof mouse !== 'undefined' && mouse.x) ? mouse.x : this.x + Math.cos(this.angle) * 220;
+                const targetY = (typeof mouse !== 'undefined' && mouse.y) ? mouse.y : this.y + Math.sin(this.angle) * 220;
+
+                for (let i = 0; i < count; i++) {
+                    const ang = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+                    const offsetR = 40 + i * 36 + Math.random() * 28;
+                    const sx = targetX + Math.cos(ang) * offsetR;
+                    const sy = targetY + Math.sin(ang) * offsetR;
+
+                    // spawn a telegraph ring to show the incoming sickle
+                    effects.push({ type: 'telegraphCircle', x: sx, y: sy, radius: 100 + Math.random() * 40, life: 28, color: 'rgba(120,60,180,0.9)', owner: this });
+
+                    // schedule the sickle strike shortly (200ms) so telegraph shows
+                    setTimeout(() => {
+                        // big instant-area hit effect (sickle slash) - applies initial damage and reap mark
+                        const ef = { x: sx, y: sy, radius: 110 + Math.random() * 40, life: 12, type: 'voidSickle', owner: this };
+                        effects.push(ef);
+
+                        // Apply immediate damage + reap mark to enemies in area
+                        enemies.forEach(enemy => {
+                            const d = Math.hypot(enemy.x - sx, enemy.y - sy);
+                            if (d < ef.radius + (enemy.radius || 12)) {
+                                try { enemy.takeDamage(computeScaledDamage(FRUITS.VOID_REAPER.damage, this)); } catch (e) {}
+                                // attach reap mark for delayed true damage (3 seconds)
+                                enemy.reapMark = { life: 60 * 3, trueDamage: FRUITS.VOID_REAPER.trueDamage, owner: this };
+                                // visual mark
+                                effects.push({ x: enemy.x, y: enemy.y - 8, life: enemy.reapMark.life, type: 'reapMark', color: '#8a3cff', owner: this });
+                            }
+                        });
+
+                        // initial burst visual
+                        effects.push({ x: sx, y: sy, radius: ef.radius * 0.9, life: 40, type: 'voidSwoosh', color: '#5a00ff' });
+                    }, 180 + Math.floor(Math.random() * 140));
+                }
+            }
+
+            magnetionSkill() {
+                // Magnetic pull: spawn a field that pulls enemies for 1.5s then explodes
+                const radius = 220; // pull radius
+                const pullDurationFrames = Math.ceil(1.5 * 60); // 1.5 seconds
+
+                // spawn field centered in front of player (aimed at mouse if available)
+                const fx = (typeof mouse !== 'undefined' && mouse.x) ? mouse.x : this.x + Math.cos(this.angle) * 160;
+                const fy = (typeof mouse !== 'undefined' && mouse.y) ? mouse.y : this.y + Math.sin(this.angle) * 160;
+
+                const field = {
+                    x: fx,
+                    y: fy,
+                    radius: radius,
+                    life: pullDurationFrames,
+                    maxLife: pullDurationFrames,
+                    type: 'magnetField',
+                    owner: this
+                };
+
+                effects.push(field);
+
+                // telegraph ring when cast
+                effects.push({ x: fx, y: fy, radius: radius * 0.6, life: 36, type: 'telegraphCircle', color: 'rgba(200,100,120,0.9)' });
+            }
+
+            colossusSkill() {
+                // Auto-target earth slams at nearest enemies around the player (up to 3 targets)
+                const targets = enemies
+                    .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                    .filter(o => o.d < 240)
+                    .sort((a, b) => a.d - b.d)
+                    .slice(0, 3);
+
+                if (targets.length === 0) {
+                    // fallback: slam in front of player
+                    const cx = this.x + Math.cos(this.angle) * 140;
+                    const cy = this.y + Math.sin(this.angle) * 140;
+                    const slam = { x: cx, y: cy, radius: 100, life: 40, type: 'colossusslam' };
+                    effects.push(slam);
+                    // damage enemies in that area
+                    enemies.forEach(enemy => {
+                        const dist = Math.hypot(enemy.x - cx, enemy.y - cy);
+                        if (dist < 100) {
+                            enemy.takeDamage(computeScaledDamage(FRUITS.COLOSSUS.damage, this));
+                            enemy.stunned = 20;
+                        }
+                    });
+                } else {
+                    targets.forEach(t => {
+                        const ex = t.e.x;
+                        const ey = t.e.y;
+                        const slam = { x: ex, y: ey, radius: 100, life: 40, type: 'colossusslam' };
+                        effects.push(slam);
+                        // apply damage and stun directly to the targeted enemy
+                        try { t.e.takeDamage(computeScaledDamage(FRUITS.COLOSSUS.damage, this)); } catch (err) { /* ignore if dead */ }
+                        t.e.stunned = 20;
+                    });
+                }
+
+                // Grant player temporary armor (reduced incoming damage)
+                this.armor = (this.armor || 0) + 10; // flat damage reduction
+                setTimeout(() => { this.armor = Math.max(0, (this.armor || 0) - 10); }, 6000);
+                spawnEffect({ x: this.x, y: this.y, text: 'Armor +10', life: 80, type: 'powerParticle' });
+            }
+
+            rubberSkill() {
+                // Create stretching arm effect
+                const stretchDistance = 120;
+                const segments = 8;
+                
+                for (let i = 0; i < segments; i++) {
+                    const segmentDistance = (stretchDistance / segments) * (i + 1);
+                    const stretchEffect = {
+                        x: this.x + Math.cos(this.angle) * segmentDistance,
+                        y: this.y + Math.sin(this.angle) * segmentDistance,
+                        radius: 15 - (i * 1.5),
+                        life: 25 - (i * 2),
+                        type: 'rubberstretch',
+                        color: FRUITS.RUBBER.color,
+                        delay: i * 2
+                    };
+                    effects.push(stretchEffect);
+                }
+
+                // Final impact effect
+                const punchEffect = {
+                    x: this.x + Math.cos(this.angle) * stretchDistance,
+                    y: this.y + Math.sin(this.angle) * stretchDistance,
+                    radius: 35,
+                    life: 30,
+                    type: 'rubberimpact',
+                    color: FRUITS.RUBBER.color
+                };
+                effects.push(punchEffect);
+
+                // Damage and knockback enemies in range
+                enemies.forEach(enemy => {
+                    const dist = Math.sqrt(
+                        Math.pow(enemy.x - punchEffect.x, 2) + 
+                        Math.pow(enemy.y - punchEffect.y, 2)
+                    );
+                    if (dist < 60) {
+                        enemy.takeDamage(computeScaledDamage(FRUITS.RUBBER.damage, this));
+                        // Strong knockback with bounce effect
+                        const knockAngle = Math.atan2(enemy.y - punchEffect.y, enemy.x - punchEffect.x);
+                        enemy.x += Math.cos(knockAngle) * 50;
+                        enemy.y += Math.sin(knockAngle) * 50;
+                        
+                        // Add bounce effect to enemy
+                        const bounceEffect = {
+                            x: enemy.x,
+                            y: enemy.y,
+                            radius: 20,
+                            life: 15,
+                            type: 'bounce'
+                        };
+                        effects.push(bounceEffect);
+                    }
+                });
+            }
+
+            blackHoleSkill() {
+                const projectile = new BlackHoleProjectile(
+                    this.x, this.y, this.angle,
+                    FRUITS.BLACKHOLE.speed,
+                    FRUITS.BLACKHOLE.damage,
+                    FRUITS.BLACKHOLE.color
+                );
+                projectiles.push(projectile);
+            }
+
+            shadowSkill() {
+                // Rework: summon 4 shadow orbs that orbit player.
+                // Each orb will try to possess the nearest uncontrolled enemy for 5s,
+                // then explode and chain-damage up to 5 enemies nearby.
+                const orbCount = 4;
+                const orbitRadius = 72;
+                const baseLife = 60 * 6; // 6 seconds lifespan (possession 5s + small buffer)
+                for (let i = 0; i < orbCount; i++) {
+                    const orb = {
+                        type: 'shadowOrb',
+                        orbitOwner: this,
+                        orbitAngle: (i / orbCount) * Math.PI * 2,
+                        orbitRadius: orbitRadius + (i % 2) * 6,
+                        angularSpeed: 0.14 + (i % 2) * 0.02,
+                        x: this.x + Math.cos((i / orbCount) * Math.PI * 2) * orbitRadius,
+                        y: this.y + Math.sin((i / orbCount) * Math.PI * 2) * orbitRadius,
+                        life: baseLife,
+                        state: 'seek', // 'seek' -> 'possessing' -> 'exploded'
+                        possessed: null,
+                        possessTimer: 0,
+                        explodeDone: false,
+                        color: FRUITS.SHADOW.color || '#2d1b69'
+                    };
+                    effects.push(orb);
+                }
+                setShopMessage && setShopMessage('You become the Shadow Controller — 4 orbs summoned');
+            }
+
+            hitoSkill() {
+                // Love Goddess skill: summon a heart at mouse position for 5 seconds.
+                const tx = (typeof mouse.x === 'number' && typeof mouse.y === 'number') ? mouse.x : (this.x + Math.cos(this.angle) * 220);
+                const ty = (typeof mouse.x === 'number' && typeof mouse.y === 'number') ? mouse.y : (this.y + Math.sin(this.angle) * 220);
+                const DURATION = 60 * 5; // 5 seconds
+                const heart = {
+                    type: 'loveHeartField',
+                    x: tx,
+                    y: ty,
+                    radius: 160,
+                    life: DURATION,
+                    maxLife: DURATION,
+                    owner: this,
+                    tethered: new Map(), // enemy -> true
+                    color: FRUITS.HITO_HITO_DEWI.color || '#ff6b9a'
+                };
+                effects.push(heart);
+                // cinematic entrance
+                effects.push({ type: 'telegraphCircle', x: tx, y: ty, radius: 36, life: 18, color: '#ff8fb3' });
+                setShopMessage && setShopMessage('Love Heart Dominion summoned!');
+            }
+
+            hitoMechaSkill() {
+                // Sky Barrage Protocol: spawn a MechaMissileBarrage controller
+                // Avoid stacking too many barrages: allow one at a time per player instance
+                if (this._mechaBarrage && specialAttacks.includes(this._mechaBarrage)) {
+                    setShopMessage && setShopMessage('Mecha Barrage already active');
+                    return;
+                }
+                const mb = new MechaMissileBarrage(this);
+                specialAttacks.push(mb);
+                this._mechaBarrage = mb;
+                setShopMessage && setShopMessage('Sky Barrage Protocol engaged!');
+            }
+
+
+
+            gravitySkill() {
+                // Create a stronger gravity field centered ahead of the player
+                const cx = this.x + Math.cos(this.angle) * 180;
+                const cy = this.y + Math.sin(this.angle) * 180;
+                const gravityField = {
+                    x: cx,
+                    y: cy,
+                    radius: 180,           // much bigger area
+                    life: 60 * 4,          // 4 seconds
+                    type: 'gravityfield',
+                    strength: 5,           // stronger pull
+                    damage: FRUITS.GRAVITY.damage, // base damage (we'll use bigger for meteors)
+                    lastDamage: 0
+                };
+                effects.push(gravityField);
+
+                // Spawn dramatic meteor strikes onto the gravity field
+                const meteorCount = 3 + Math.floor((this.level || 1) / 8); // scale with level
+                for (let i = 0; i < meteorCount; i++) {
+                    // stagger arrival times for cinematic effect
+                    const delay = 250 + i * 220 + Math.random() * 220;
+                    setTimeout(() => {
+                        // spawn meteor from high above, with horizontal jitter
+                        const sx = cx + (Math.random() - 0.5) * 320;
+                        const sy = cy - 600 - Math.random() * 160; // above the playfield
+                        // aim roughly towards center with small angle jitter
+                        const angle = Math.PI / 2 + (Math.random() - 0.5) * 0.18;
+                        const meteor = new Projectile(sx, sy, angle, 8 + Math.random() * 4, Math.floor(FRUITS.GRAVITY.damage * 2.6), '#ff9944', 'meteor', this);
+                        meteor.targetY = cy + (Math.random() - 0.5) * 24; // impact Y
+                        meteor.impactRadius = 140 + Math.floor(Math.random() * 40); // big impact
+                        meteor.knockup = 40 + Math.floor(Math.random() * 20);
+                        meteor.accel = 1.2 + Math.random() * 0.8; // accelerate while falling
+                        meteor.horzSpeed = (cx - sx) / Math.max(60, Math.abs((meteor.targetY - sy) / meteor.speed));
+                        meteor.radius = 14;
+                        projectiles.push(meteor);
+                    }, delay);
+                }
+
+                setShopMessage && setShopMessage('Area Gravitasi dipanggil! Meteor incoming...');
+            }
+
+                    sunGodSkill() {
+                        // Aim at mouse position if available, otherwise in front of player
+                        const tx = (typeof mouse.x === 'number' && typeof mouse.y === 'number') ? mouse.x : (this.x + Math.cos(this.angle) * 220);
+                        const ty = (typeof mouse.x === 'number' && typeof mouse.y === 'number') ? mouse.y : (this.y + Math.sin(this.angle) * 220);
+
+                        // Create the divine sun effect
+                        const sun = {
+                            x: tx,
+                            y: ty,
+                            radius: 220,
+                            life: 60 * 5, // 5 seconds burn
+                            type: 'sungod',
+                            owner: this,
+                            pullStrength: 6,
+                            burnDuration: 60 * 5,
+                            burnDPS: 18, // damage per second from sun's burn
+                            _threads: [] // will hold active tether targets for visuals
+                        };
+
+                        effects.push(sun);
+
+                        // Cinematic entrance: glow + small ring
+                        effects.push({ x: tx, y: ty, radius: 40, life: 28, type: 'seraphimpact', color: '#ffd77a' });
+
+                        setShopMessage && setShopMessage('Sun God summoned — semua musuh ditarik dan terbakar! (5s)');
+                    }
+
+            mirageSkill() {
+                // Create a mirage field centered on player that confuses enemies inside
+                const field = { x: this.x, y: this.y, radius: 160, life: 60 * 5, type: 'miragefield' };
+                effects.push(field);
+                // Apply confusion to enemies within radius
+                enemies.forEach(enemy => {
+                    const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (d < field.radius) {
+                        enemy.confused = 60 * 4; // 4 seconds
+                        effects.push({ x: enemy.x, y: enemy.y, radius: 20, life: 80, type: 'mirageshimmer' });
+                    }
+                });
+                setShopMessage && setShopMessage('Mirage Field aktif!');
+            }
+
+            volcanoSkill() {
+                // Eruption: target nearest enemies with lava pillars (up to 6)
+                const count = 6;
+                const targets = enemies
+                    .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                    .filter(o => o.d < 420)
+                    .sort((a, b) => a.d - b.d)
+                    .slice(0, count);
+
+                if (targets.length === 0) {
+                    // fallback: radial pillars
+                    for (let i = 0; i < count; i++) {
+                        const angle = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+                        const px = this.x + Math.cos(angle) * 160;
+                        const py = this.y + Math.sin(angle) * 160;
+                        effects.push({ x: px, y: py, radius: 10, life: 60, type: 'lavapillar' });
+                        effects.push({ x: px, y: py, radius: 40, life: 90, type: 'lavaburn' });
+                    }
+                } else {
+                    targets.forEach(t => {
+                        const px = t.e.x;
+                        const py = t.e.y;
+                        effects.push({ x: px, y: py, radius: 10, life: 60, type: 'lavapillar' });
+                        effects.push({ x: px, y: py, radius: 40, life: 90, type: 'lavaburn' });
+                        try { t.e.takeDamage(computeScaledDamage(FRUITS.VOLCANO.damage * 0.6, this)); } catch (err) {}
+                        t.e.blueburn = t.e.blueburn || 0;
+                        t.e.blueburn += 160; // hot lava DoT
+                    });
+                }
+                setShopMessage && setShopMessage('Eruption!');
+            }
+
+            celestialSkill() {
+                // Starfall: automatically target nearest enemies around the player
+                const count = 8;
+                // build list of nearby enemies sorted by distance
+                const nearby = enemies
+                    .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                    .filter(o => o.d < 500)
+                    .sort((a, b) => a.d - b.d);
+
+                for (let i = 0; i < count; i++) {
+                    if (i < nearby.length) {
+                        // target this enemy position (with small random offset)
+                        const targetEnemy = nearby[i].e;
+                        const tx = targetEnemy.x + (Math.random() - 0.5) * 30;
+                        const ty = targetEnemy.y + (Math.random() - 0.5) * 30;
+                        effects.push({ x: tx, y: ty, radius: 6, life: 30, type: 'starfall', delay: i * 8 });
+                    } else {
+                        // fallback random spread
+                        const spread = (Math.random() - 0.5) * 0.8;
+                        const dist = 160 + Math.random() * 160;
+                        const tx = this.x + Math.cos(this.angle + spread) * dist;
+                        const ty = this.y + Math.sin(this.angle + spread) * dist;
+                        effects.push({ x: tx, y: ty, radius: 6, life: 30, type: 'starfall', delay: i * 8 });
+                    }
+                }
+                setShopMessage && setShopMessage('Starfall dipanggil!');
+            }
+
+            auroraSkill() {
+                // Aurora: shimmering waves that slow/freeze enemies and grant a temporary shield
+                const field = { x: this.x, y: this.y, radius: 220, life: 60 * 4, type: 'aurorafield' };
+                effects.push(field);
+                // apply freeze/slow to enemies inside
+                enemies.forEach(enemy => {
+                    const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (d < field.radius) {
+                        enemy.frozen = 60 * 2; // 2 seconds frozen/immobile
+                        enemy.slowed = 60 * 3;
+                        effects.push({ x: enemy.x, y: enemy.y, radius: 18, life: 80, type: 'aurorashimmer' });
+                    }
+                });
+                // Grant player's temporary shield (absorb damage)
+                this.shield = (this.shield || 0) + 30; // absorbs 30 damage
+                setTimeout(() => { this.shield = Math.max(0, (this.shield || 0) - 30); }, 4000);
+                spawnEffect({ x: this.x, y: this.y, text: 'Shield +30', life: 80, type: 'powerParticle' });
+            }
+
+            quasarSkill() {
+                // Quasar: burst of cosmic plasma - radial beams + lingering DoT
+                const beams = 10;
+                for (let i = 0; i < beams; i++) {
+                    const a = (i / beams) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
+                    const px = this.x + Math.cos(a) * 20;
+                    const py = this.y + Math.sin(a) * 20;
+                    // projectile-like instantaneous beam
+                    effects.push({ x: this.x, y: this.y, tx: this.x + Math.cos(a) * 420, ty: this.y + Math.sin(a) * 420, life: 18, type: 'quasarbeam', angle: a });
+                }
+                // apply DoT to enemies along beams (approx by distance/angle)
+                enemies.forEach(enemy => {
+                    const ang = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (dist < 420) {
+                        // chance to be hit depending on angular proximity
+                        const hitChance = Math.max(0.2, 1 - (dist / 420));
+                        if (Math.random() < hitChance) {
+                            enemy.takeDamage(computeScaledDamage(FRUITS.QUASAR.damage, this));
+                            enemy.quasarDot = (enemy.quasarDot || 0) + 120; // DoT duration
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 12, life: 60, type: 'quasarspark' });
+                        }
+                    }
+                });
+                setShopMessage && setShopMessage('Quasar unleashed!');
+            }
+
+            originSkill() {
+                // Origin: reset nearby enemies status, heal player and allies, purge negative
+                const range = 260;
+                // Purge/debuff remove on player
+                this.hp = Math.min(this.maxHp, this.hp + Math.floor(this.maxHp * 0.25));
+                spawnEffect({ x: this.x, y: this.y - 20, text: `+${Math.floor(this.maxHp*0.25)} HP`, life: 50, type: 'healpickup' });
+                enemies.forEach(enemy => {
+                    const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (d < range) {
+                        // reset statuses (stun, charmed, burns, slows)
+                        enemy.stunned = 0;
+                        enemy.charmed = 0;
+                        enemy.burning = 0;
+                        enemy.blueburn = 0;
+                        enemy.slowed = 0;
+                        effects.push({ x: enemy.x, y: enemy.y, radius: 22, life: 40, type: 'originpulse' });
+                    }
+                });
+                setShopMessage && setShopMessage('Origin wave: status reset & heal');
+            }
+
+            nebulaSkill() {
+                // Nebula: create fog that blinds enemies and makes player invisible briefly
+                const fog = { x: this.x + Math.cos(this.angle) * 100, y: this.y + Math.sin(this.angle) * 100, radius: 200, life: 60 * 5, type: 'nebulafog' };
+                effects.push(fog);
+                enemies.forEach(enemy => {
+                    const d = Math.hypot(enemy.x - fog.x, enemy.y - fog.y);
+                    if (d < fog.radius) {
+                        enemy.blinded = 60 * 3; // can't see/attack accurately
+                        effects.push({ x: enemy.x, y: enemy.y, radius: 14, life: 60, type: 'nebulaspark' });
+                    }
+                });
+                // Player invisibility buff
+                this.invisible = 60 * 3;
+                setShopMessage && setShopMessage('Nebula deployed: you are hidden');
+            }
+
+            seraphSkill() {
+                // Divine Intervention (Elysium Field) - guaranteed hits
+                const DURATION = 60 * 5; // frames
+                const owner = this;
+                const field = { x: owner.x, y: owner.y, radius: 220, life: DURATION, type: 'elysiumField', owner: owner };
+                effects.push(field);
+
+                // spawn rotating halo effect
+                effects.push({ type: 'elysiumHalo', owner: owner, life: DURATION, angle: 0 });
+
+                // Immediately mark enemies inside the field as stunned (per-enemy flag) and create chain visuals
+                enemies.forEach(e => {
+                    const d = Math.hypot(e.x - owner.x, e.y - owner.y);
+                    if (d < field.radius) {
+                        e._elysiumStun = DURATION; // will be honored in Enemy.update
+                        // spawn chain linking player to enemy
+                        effects.push({ type: 'elysiumChain', source: owner, target: e, life: DURATION, color: '#fff8d6' });
+                        // small aura
+                        effects.push({ x: e.x, y: e.y, radius: e.radius + 8, life: DURATION, type: 'puppetAura', color: '#fff8d6' });
+                    }
+                });
+
+                // Per-second tick: apply damage to all enemies inside the field and heal player
+                let ticks = 5;
+                const tickInterval = 1000;
+                const tickId = setInterval(() => {
+                    if (ticks <= 0) { clearInterval(tickId); return; }
+                    // apply damage to every enemy inside field (guaranteed hit)
+                    enemies.forEach(e => {
+                        const d = Math.hypot(e.x - owner.x, e.y - owner.y);
+                        if (d < field.radius) {
+                            // beam visual from sky to enemy
+                            effects.push({ type: 'elysiumBeam', sx: owner.x, sy: owner.y - 240, x: e.x, y: e.y, life: 36, color: '#fff8d6' });
+                            e.takeDamage(computeScaledDamage(FRUITS.SERAPH.damage, this));
+                            effects.push({ x: e.x, y: e.y, radius: 18, life: 26, type: 'seraphimpact' });
+                        }
+                    });
+
+                    // heal player
+                    const healAmount = Math.floor(owner.maxHp * 0.04);
+                    owner.hp = Math.min(owner.maxHp, owner.hp + healAmount);
+                    effects.push({ x: owner.x, y: owner.y - 8, text: `+${healAmount} HP`, life: 36, type: 'healpickup', color:'#fff8d6' });
+                    ticks--;
+                }, tickInterval);
+
+                // End of field: implode visual and clear
+                setTimeout(() => {
+                    effects.push({ x: owner.x, y: owner.y, radius: 260, life: 18, type: 'elysiumImplode' });
+                    setShopMessage && setShopMessage('Divine Intervention complete');
+                }, DURATION * (1000/60));
+            }
+
+            prismSkill() {
+                // Prism (reworked): fire 7 colorful beams; each beam chains up to 7 enemies.
+                const beamCount = 7;
+                const beamChainMax = 7; // per-beam chain length
+                const colors = ['#ff3b30','#ff9500','#ffd60a','#34c759','#007aff','#5856d6','#af52de']; // ROYGBIV-ish
+
+                // sort enemies by distance from player (used to pick initial targets)
+                const sorted = enemies
+                    .map(e => ({ e, d: Math.hypot(e.x - this.x, e.y - this.y) }))
+                    .sort((a, b) => a.d - b.d)
+                    .map(o => o.e);
+
+                if (sorted.length === 0) {
+                    // No enemies: fire decorative beams forward and impact on ground
+                    for (let i = 0; i < beamCount; i++) {
+                        const angle = this.angle + (i / beamCount - 0.5) * 0.12 + (Math.random() - 0.5) * 0.03;
+                        const tx = this.x + Math.cos(angle) * 420;
+                        const ty = this.y + Math.sin(angle) * 420;
+                        const color = colors[i % colors.length];
+                        effects.push({ type: 'prismBeamLine', sx: this.x, sy: this.y, tx: tx, ty: ty, life: 18, color: color });
+                        effects.push({ type: 'prismimpact', x: tx, y: ty, life: 20, color: color, radius: 24 });
+                    }
+                    setShopMessage && setShopMessage('Prismatic Barrage!');
+                    return;
+                }
+
+                // Fire each beam. Each beam will chain to up to `beamChainMax` enemies.
+                for (let i = 0; i < beamCount; i++) {
+                    const initial = sorted[i % sorted.length];
+                    if (!initial) continue;
+                    const color = colors[i % colors.length];
+
+                    // Build chain for this beam (per-beam used set so beams can overlap targets)
+                    const chain = [];
+                    const used = new Set();
+                    chain.push(initial);
+                    used.add(initial);
+
+                    while (chain.length < beamChainMax) {
+                        const last = chain[chain.length - 1];
+                        if (!last) break;
+                        let nearest = null; let nd = Infinity;
+                        enemies.forEach(en => {
+                            if (used.has(en)) return;
+                            const d = Math.hypot(en.x - last.x, en.y - last.y);
+                            // limit linkage distance so chain looks natural
+                            if (d < nd && d < 360) { nd = d; nearest = en; }
+                        });
+                        if (!nearest) break;
+                        chain.push(nearest); used.add(nearest);
+                    }
+
+                    // Apply visuals and damage along the chain (source -> first target -> next ...)
+                    for (let j = 0; j < chain.length; j++) {
+                        const srcX = (j === 0) ? this.x : chain[j - 1].x;
+                        const srcY = (j === 0) ? this.y : chain[j - 1].y;
+                        const tx = chain[j].x;
+                        const ty = chain[j].y;
+
+                        // beam segment visual
+                        effects.push({ type: 'prismBeamLine', sx: srcX, sy: srcY, tx: tx, ty: ty, life: 20, color: color });
+                        effects.push({ type: 'prismimpact', x: tx, y: ty, life: 22, color: color, radius: 28 });
+
+                        // damage + small stagger per hit
+                        try { chain[j].takeDamage(computeScaledDamage(FRUITS.PRISM.damage, this)); } catch (e) {}
+                        chain[j].stunned = Math.max(chain[j].stunned || 0, 12);
+                    }
+                }
+
+                setShopMessage && setShopMessage('Prismatic Barrage! — beams chain up to 7 enemies each');
+            }
+
+            // Doll Doll no Mi - Marionette Strings
+            dollSkill() {
+                if (!enemies || enemies.length === 0) return;
+                // control up to 10 enemies (prioritize bosses/elites then distance)
+                const prioritized = enemies.slice().sort((a,b)=>{
+                    const pa = (a.isBoss || a.isElite) ? 0 : 1;
+                    const pb = (b.isBoss || b.isElite) ? 0 : 1;
+                    if (pa !== pb) return pa - pb;
+                    const da = Math.hypot(a.x - this.x, a.y - this.y);
+                    const db = Math.hypot(b.x - this.x, b.y - this.y);
+                    return da - db;
+                });
+
+                let controlledCount = 0;
+                for (let i = 0; i < prioritized.length && controlledCount < 10; i++) {
+                    const target = prioritized[i];
+                    if (!target) continue;
+                    // skip if already controlled by someone else
+                    if (target.controlled && target.controlled > 0) continue;
+
+                    // apply control for 7 seconds
+                    target.controlled = 60 * 7;
+                    target._controlledSource = this; // reference owner
+
+                    // spawn a persistent marionette string effect that will live for the control duration
+                    effects.push({ type: 'marionetteString', source: this, target: target, life: 60 * 7, color: '#000000' });
+
+                    // visual aura on controlled enemy
+                    effects.push({ x: target.x, y: target.y, radius: target.radius + 8, life: 60 * 7, type: 'puppetAura', color: '#000000' });
+
+                    controlledCount++;
+                }
+
+                if (controlledCount > 0) setShopMessage && setShopMessage(`Marionette Strings! Controlled ${controlledCount}`);
+            }
+
+            kirinSkill() {
+                // Kirin: charge forward in a blazing steed form, heal allies and trample enemies
+                this.startZoanTransform(60 * 4);
+                const chargeDist = 420;
+                const steps = 18;
+                // telegraph line
+                effects.push({ type: 'telegraphLine', x: this.x, y: this.y, angle: this.angle, length: chargeDist, life: 30, color: '#ffd1f0' });
+                // visual charge: move player forward quickly while damaging enemies on path
+                for (let i = 1; i <= steps; i++) {
+                    setTimeout(() => {
+                        const t = i / steps;
+                        const nx = this.x + Math.cos(this.angle) * (chargeDist * t);
+                        const ny = this.y + Math.sin(this.angle) * (chargeDist * t);
+                        // visual hoof-step trail
+                        effects.push({ type: 'kirinChargeTrail', x: nx, y: ny, radius: 14, life: 28, angle: this.angle, color: '#ffd1f0' });
+                        // damage and heal near the step point
+                        enemies.forEach(e => {
+                            if (Math.hypot(e.x - nx, e.y - ny) < 36) {
+                                e.takeDamage(computeScaledDamage(FRUITS.KIRIN.damage, this));
+                                effects.push({ x: e.x, y: e.y, radius: 18, life: 18, type: 'slash' });
+                            }
+                        });
+                        // heal small amount around each step
+                        this.hp = Math.min(this.maxHp, this.hp + 3);
+                        effects.push({ x: nx, y: ny, radius: 12, life: 12, type: 'seraphheal' });
+                        // final burst
+                        if (i === steps) {
+                            effects.push({ x: nx, y: ny, radius: 48, life: 30, type: 'rubberimpact', color: '#ffd1f0' });
+                        }
+                    }, i * 20);
+                }
+                setShopMessage && setShopMessage('Kirin Charge!');
+            }
+
+            griffinSkill() {
+                // Griffin: leap into sky and dive onto target area for massive impact
+                const tx = mouse.x; const ty = mouse.y;
+                // telegraph circle
+                effects.push({ type: 'telegraphCircle', x: tx, y: ty, radius: 80, life: 45, color: '#ffd27f' });
+                setTimeout(() => {
+                    // sky streak visuals
+                    for (let i = 0; i < 8; i++) {
+                        const sx = this.x + (i-4)*30;
+                        const sy = this.y - 400;
+                        effects.push({ type: 'skyStreak', sx: sx, sy: sy, x: tx, y: ty, life: 38, width: 8, color: '#ffd27f' });
+                    }
+                    // dive: create fast projectiles from sky that slam into target
+                    for (let i = 0; i < 8; i++) {
+                        const a = Math.atan2(ty - (this.y - 400), tx - (this.x + (i-4)*30));
+                        const proj = new Projectile(this.x + (i-4)*30, this.y - 400, a, 18, FRUITS.GRIFFIN.damage, FRUITS.GRIFFIN.color, 'dragon', this);
+                        projectiles.push(proj);
+                    }
+                    // impact ring damage on arrival
+                    setTimeout(()=>{
+                        enemies.forEach(e => { if (Math.hypot(e.x - tx, e.y - ty) < 120) e.takeDamage(computeScaledDamage(FRUITS.GRIFFIN.damage, this)); });
+                        effects.push({ x: tx, y: ty, radius: 140, life: 30, type: 'bounce' });
+                    }, 400);
+                }, 650);
+                setShopMessage && setShopMessage('Aerial Pounce!');
+            }
+
+            garudaSkill() {
+                // Garuda: summon a sky cyclone that pulls enemies inward then slices them
+                const cx = this.x + Math.cos(this.angle) * 160;
+                const cy = this.y + Math.sin(this.angle) * 160;
+                const field = { x: cx, y: cy, radius: 140, life: 60, type: 'gravityfield', strength: 3, damage: FRUITS.GARUDA.damage };
+                effects.push(field);
+                // after short delay, blade strikes
+                setTimeout(()=>{
+                    for (let i=0;i<12;i++) {
+                        const a = (i/12)*Math.PI*2;
+                        projectiles.push(new Projectile(cx + Math.cos(a)*10, cy + Math.sin(a)*10, a, 10, Math.floor(FRUITS.GARUDA.damage*0.6), FRUITS.GARUDA.color, 'blade', this));
+                        // blade slash visual
+                        effects.push({ type: 'bladeSlash', x: cx + Math.cos(a)*10, y: cy + Math.sin(a)*10, radius: 36, life: 28, color: FRUITS.GARUDA.color });
+                    }
+                    // apply heavy damage to enemies near center
+                    enemies.forEach(e => { if (Math.hypot(e.x - cx, e.y - cy) < 120) e.takeDamage(computeScaledDamage(FRUITS.GARUDA.damage, this)); });
+                }, 600);
+                setShopMessage && setShopMessage('Sky Cyclone!');
+            }
+
+            fenrirSkill() {
+                // Fenrir: terrifying howl that causes fear and DoT around player
+                const radius = 260;
+                effects.push({ x: this.x, y: this.y, radius: radius, life: 40, type: 'death' });
+                // howl visual wave
+                effects.push({ x: this.x, y: this.y, radius: radius * 0.9, life: 40, type: 'howlWave' });
+                enemies.forEach(e => {
+                    const d = Math.hypot(e.x - this.x, e.y - this.y);
+                    if (d < radius) {
+                        e.stunned = 0;
+                        e.confused = 120; // run around
+                        // DoT over time
+                        e.quasarDot = (e.quasarDot || 0) + 180;
+                        effects.push({ x: e.x, y: e.y, radius: 22, life: 30, type: 'shadowattack' });
+                    }
+                });
+                setShopMessage && setShopMessage('Ragnarok Howl!');
+            }
+
+            quetzalcoatlSkill() {
+                // Quetzalcoatl: rain poisonous feathers over a wide cone in front
+                const cones = 24;
+                for (let i=0;i<cones;i++) {
+                    const spread = (i / cones - 0.5) * 1.6;
+                    const angle = this.angle + spread + (Math.random()-0.5)*0.08;
+                    const dist = 220 + Math.random()*120;
+                    const tx = this.x + Math.cos(angle)*dist;
+                    const ty = this.y + Math.sin(angle)*dist;
+                    // spawn poison shard projectile
+                    const p = new Projectile(this.x + Math.cos(angle)*20, this.y + Math.sin(angle)*20, angle, 12, FRUITS.QUETZALCOATL.damage, FRUITS.QUETZALCOATL.color, 'venom', this);
+                    projectiles.push(p);
+                    // visual feather trails along projectile path
+                    for (let t=0;t<6;t++) {
+                        const delay = t * 30 + Math.random()*40;
+                        setTimeout(()=>{
+                            const px = this.x + Math.cos(angle) * (20 + (t/6) * dist);
+                            const py = this.y + Math.sin(angle) * (20 + (t/6) * dist);
+                            effects.push({ type: 'feathertrail', x: px, y: py, life: 48, angle: angle + 0.4 * (Math.random()-0.5), w: 12, h: 4, color: FRUITS.QUETZALCOATL.color });
+                        }, delay);
+                    }
+                    // place poison puddle on impact after short delay
+                    setTimeout(()=>{ effects.push({ x: tx, y: ty, radius: 28, life: 160, type: 'poisoncloud' }); }, 220 + Math.random()*160);
+                }
+                setShopMessage && setShopMessage('Feathered Storm!');
+            }
+
+            bakuSkill() {
+                // Baku: consume negative effects on player and allies, then release cleansing shockwave that damages enemies
+                // Remove debuffs from player
+                const removed = [];
+                ['burning','blueburn','quasarDot','stunned','frozen','charmed','slowed'].forEach(k => { if (this[k]) { removed.push(k); delete this[k]; } });
+                effects.push({ x: this.x, y: this.y, radius: 40, life: 40, type: 'seraphheal' });
+                // cleansing shimmer
+                effects.push({ x: this.x, y: this.y, radius: 64, life: 40, type: 'dreamShimmer', color: FRUITS.BAKU.color });
+                // small heal for allies (player only in singleplayer)
+                this.hp = Math.min(this.maxHp, this.hp + 40);
+                // release shockwave
+                effects.push({ x: this.x, y: this.y, radius: 100, life: 30, type: 'rubberimpact', color: FRUITS.BAKU.color });
+                enemies.forEach(e => { if (Math.hypot(e.x - this.x, e.y - this.y) < 120) e.takeDamage(computeScaledDamage(FRUITS.BAKU.damage, this)); });
+                setShopMessage && setShopMessage('Dream Eater!');
+            }
+
+            azureDragonSkill() {
+                // Azure Dragon: massive tidal surge forward that pushes and damages
+                const dir = this.angle;
+                const steps = 10;
+                for (let i=1;i<=steps;i++) {
+                    setTimeout(()=>{
+                        const r = i * 60;
+                        const cx = this.x + Math.cos(dir) * r;
+                        const cy = this.y + Math.sin(dir) * r;
+                        effects.push({ x: cx, y: cy, radius: 60, life: 24, type: 'bloomfield', color: FRUITS.AZURE_DRAGON.color });
+                        effects.push({ x: cx, y: cy, radius: 68, life: 28, type: 'tidalFoam', color: FRUITS.AZURE_DRAGON.color });
+                        enemies.forEach(e => { const d = Math.hypot(e.x - cx, e.y - cy); if (d < 80) { e.takeDamage(computeScaledDamage(FRUITS.AZURE_DRAGON.damage, this)); e.slowed = 120; } });
+                    }, i * 80);
+                }
+                setShopMessage && setShopMessage('Tidal Surge!');
+            }
+
+            bloomSkill() {
+                // Carnivorous Garden: plant a seed at target location which grows into a trap
+                const tx = (typeof mouse.x === 'number') ? mouse.x : (this.x + Math.cos(this.angle) * 120);
+                const ty = (typeof mouse.y === 'number') ? mouse.y : (this.y + Math.sin(this.angle) * 120);
+
+                // small seed impact visual
+                effects.push({ x: tx, y: ty, radius: 8, life: 28, type: 'powerParticle', color: FRUITS.BLOOM.color });
+
+                // spawn the carnivorous garden controller which manages swallow/chew/spit
+                specialAttacks.push(new CarnivorousGarden(this, tx, ty));
+                setShopMessage && setShopMessage('Carnivorous Garden planted!');
+            }
+
+            echoSkill() {
+                // Echo: Emit a sonic wave that knocks back and stuns enemies, and reflects incoming projectiles
+                const wave = { x: this.x, y: this.y, radius: 20, life: 30, type: 'echowave' };
+                effects.push(wave);
+
+                // immediate apply to enemies in small radius
+                enemies.forEach(enemy => {
+                    const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (d < 140) {
+                        const ang = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                        enemy.x += Math.cos(ang) * 120;
+                        enemy.y += Math.sin(ang) * 120;
+                        enemy.stunned = 40;
+                    }
+                });
+
+                // Reflect nearby projectiles (simple approach)
+                projectiles.forEach(p => {
+                    const d = Math.hypot(p.x - this.x, p.y - this.y);
+                    if (d < 180) {
+                        // reverse direction briefly
+                        p.angle += Math.PI;
+                        p.speed = Math.max(4, p.speed);
+                    }
+                });
+
+                setShopMessage && setShopMessage('Sonic Wave!');
+            }
+
+            startZoanTransform(durationFrames = 60 * 15) {
+                if (!this.fruit) return;
+                // Only allow if fruit category is zoan
+                const fruitData = FRUITS[this.fruit];
+                if (!fruitData || fruitData.category !== 'zoan') return;
+
+                this.isZoan = true;
+                this.zoanTimer = durationFrames;
+                // Example buffs: more HP and speed while Zoan
+                this.maxHp += 50;
+                this.hp = Math.min(this.maxHp, this.hp + 50);
+                this.speed += 1.2;
+
+                const zoanEffect = { x: this.x, y: this.y, radius: 40, life: 30, type: 'zoantransform' };
+                effects.push(zoanEffect);
+                this.updateUI();
+            }
+
+            endZoanTransform() {
+                if (!this.isZoan) return;
+                this.isZoan = false;
+                // Revert buffs
+                this.maxHp = Math.max(50, this.maxHp - 50);
+                this.hp = Math.min(this.maxHp, this.hp);
+                this.speed = Math.max(1, this.speed - 1.2);
+                const zoanEnd = { x: this.x, y: this.y, radius: 30, life: 30, type: 'zoanend' };
+                effects.push(zoanEnd);
+                this.updateUI();
+            }
+

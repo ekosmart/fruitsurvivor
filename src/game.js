@@ -1,0 +1,7978 @@
+
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        // Safety: clamp negative radii passed to ctx.arc to prevent IndexSizeError
+        (function(){
+            try {
+                const _arc = CanvasRenderingContext2D.prototype.arc;
+                CanvasRenderingContext2D.prototype.arc = function(x,y,r,a,b,c){
+                    if (typeof r !== 'number' || isNaN(r) || r < 0) r = 0;
+                    return _arc.call(this, x, y, r, a, b, c);
+                };
+            } catch(e) { /* ignore if environment prevents prototype override */ }
+        })();
+
+        // Improved lightning drawer (jagged recursive-like strokes)
+        function drawLightning(x1, y1, x2, y2, color = '#63b3ed', thickness = 3) {
+            try {
+                const dist = Math.hypot(x2 - x1, y2 - y1);
+                const steps = Math.max(2, Math.floor(dist / 10));
+                const dx = (x2 - x1) / steps;
+                const dy = (y2 - y1) / steps;
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                let cx = x1, cy = y1;
+                for (let i = 0; i < steps; i++) {
+                    // small jitter that tapers toward ends
+                    const t = i / steps;
+                    const jitter = (Math.random() - 0.5) * 18 * (1 - Math.abs(t - 0.5) * 2);
+                    cx += dx + (Math.random() - 0.5) * 4;
+                    cy += dy + (Math.random() - 0.5) * 4;
+                    ctx.lineTo(cx + Math.cos((i / steps) * Math.PI) * jitter, cy + Math.sin((i / steps) * Math.PI) * jitter);
+                }
+                ctx.lineTo(x2, y2);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = thickness;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.shadowBlur = Math.max(8, thickness * 4);
+                ctx.shadowColor = color;
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+                ctx.restore();
+            } catch (e) { /* drawing should never break game */ }
+        }
+
+        // Game constants (will be initialized in resize)
+        let GAME_WIDTH = 1200;
+        let GAME_HEIGHT = 800;
+        // Camera
+        const camera = { x: 0, y: 0, radius: 180, lerp: 0.16, shakeTime: 0, shakeMag: 0 };
+
+        // Movement limits
+        const MAX_PLAYER_SPEED = 6; // clamp player's base speed
+        const MAX_ENEMY_SPEED = 3.2; // clamp enemy base speed (per-enemy speed may be multiplied for behaviors)
+
+        // Resize canvas and world to player's screen
+        function resizeCanvasToWindow() {
+            // Make canvas fill the whole window (full-screen experience)
+            const vw = Math.max(320, Math.floor(window.innerWidth));
+            const vh = Math.max(260, Math.floor(window.innerHeight));
+            // set the canvas backing store size to match window pixels
+            canvas.width = vw;
+            canvas.height = vh;
+            // set world size larger than viewport so camera can move
+            // keep some minimum world size as before
+            GAME_WIDTH = Math.max(1200, Math.floor(vw * 2));
+            GAME_HEIGHT = Math.max(800, Math.floor(vh * 2));
+        }
+
+        // initialize size
+        resizeCanvasToWindow();
+        window.addEventListener('resize', () => {
+            resizeCanvasToWindow();
+            // keep player inside bounds if world shrank
+            player.x = Math.max(player.radius, Math.min(GAME_WIDTH - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(GAME_HEIGHT - player.radius, player.y));
+        });
+        
+        // Game state
+        const gameState = {
+            currentIsland: 0,
+            islands: [
+                { name: 'Pulau Pemula', color: '#90EE90', enemyType: 'basic', theme: 'starter' },
+                { name: 'Pulau Es', color: '#E0FFFF', enemyType: 'ice', theme: 'ice' },
+                { name: 'Pulau Petir', color: '#FFD700', enemyType: 'lightning', theme: 'lightning' },
+                { name: 'Pulau Naga', color: '#FF6347', enemyType: 'fire', theme: 'fire' },
+                { name: 'Ascent Peak', color: '#d1d1d1', enemyType: 'mountain', theme: 'rock' },
+                { name: 'Cactus Town', color: '#d0b36b', enemyType: 'desert', theme: 'sand' },
+                { name: 'Duo Isle', color: '#b8e0e0', enemyType: 'giant', theme: 'giant' },
+                { name: 'Snowy Citadel', color: '#e6f6ff', enemyType: 'ice', theme: 'ice' },
+                { name: 'Sand Empire', color: '#e3c07b', enemyType: 'sand', theme: 'sand' },
+                { name: 'Knock-Up Reef', color: '#9fe7f2', enemyType: 'reef', theme: 'water' },
+                { name: 'Cloud Haven', color: '#f0f8ff', enemyType: 'air', theme: 'sky' },
+                { name: 'Canal City', color: '#d7f0ff', enemyType: 'mech', theme: 'water' },
+                { name: 'Judgement Gate', color: '#cfcfd0', enemyType: 'elite', theme: 'fortress' },
+                { name: 'Mangrove Grove', color: '#7dbb8d', enemyType: 'swamp', theme: 'swamp' },
+                { name: 'Warrior\'s Island', color: '#f2d2c4', enemyType: 'warrior', theme: 'army' },
+                { name: 'Maximum Security', color: '#d7d7d1', enemyType: 'prison', theme: 'fortress' },
+                { name: 'Justice Square', color: '#e0e7ff', enemyType: 'urban', theme: 'city' },
+                { name: 'Ocean Palace', color: '#8fd3ff', enemyType: 'sea', theme: 'water' },
+                { name: 'Elemental Forge', color: '#ffd6b3', enemyType: 'elemental', theme: 'forge' },
+                { name: 'Toy Kingdom', color: '#ffe6f0', enemyType: 'toy', theme: 'toy' },
+                { name: 'Elephant Fortress', color: '#c7c0b0', enemyType: 'elephant', theme: 'beast' },
+                { name: 'Candy Land', color: '#ffd9f0', enemyType: 'food', theme: 'candy' },
+                { name: 'Samurai Nation', color: '#f5e6d8', enemyType: 'samurai', theme: 'samurai' },
+                { name: 'Future Isle', color: '#dbe8ff', enemyType: 'tech', theme: 'future' },
+                { name: 'Giant\'s Homeland', color: '#c8d7d7', enemyType: 'giant', theme: 'giant' }
+                ,
+                { name: 'LaughTale', color: '#ffeedd', enemyType: 'party', theme: 'laugh' },
+                { name: 'Verth', color: '#0b0b17', enemyType: 'lunar', theme: 'verth' },
+                { name: 'Void Temple', color: '#07070a', enemyType: 'void', theme: 'void' },
+                { name: 'Great Kingdom of Dream', color: '#f3e8ff', enemyType: 'dream', theme: 'dream' }
+                ],
+            paused: true,
+            // Phase-island flags
+            phaseActive: false,       // whether current island is in phase mode
+            phaseNormalsSpawned: 0,   // how many normals spawned for phase
+            phaseTotalNormals: 0,     // target number (e.g., 25)
+            phaseBossSpawned: false,
+            phaseBossDefeated: false
+        };
+
+        // Emoji mappings per island index — enemies, bosses, and elites (theme-appropriate)
+        const ENEMY_EMOJIS = [
+            '🧌', // 0 Pulau Pemula - starter ogre
+            '🧊', // 1 Ice
+            '⚡', // 2 Lightning
+            '🔥', // 3 Fire / Naga
+            '🪨', // 4 Mountain / rock
+            '🌵', // 5 Cactus / desert
+            '🪜', // 6 Duo Isle / giant-ish
+            '❄️', // 7 Snowy Citadel
+            '🏜️', // 8 Sand Empire
+            '🐠', // 9 Knock-Up Reef / reef
+            '☁️', // 10 Cloud Haven / sky
+            '🤖', // 11 Canal City / mech
+            '🛡️', // 12 Judgement Gate / fortress
+            '🪵', // 13 Mangrove Grove / swamp (woody)
+            '🪖', // 14 Warrior's Island / army
+            '🔒', // 15 Maximum Security / prison
+            '🏛️', // 16 Justice Square / city
+            '🐙', // 17 Ocean Palace / sea
+            '⚒️', // 18 Elemental Forge / forge
+            '🧸', // 19 Toy Kingdom / toy
+            '🐘', // 20 Elephant Fortress / beast
+            '🍬', // 21 Candy Land / candy
+            '🗡️', // 22 Samurai Nation / samurai
+            '🤖', // 23 Future Isle / tech
+            '🗿'  // 24 Giant's Homeland / giant
+        ];
+
+        const BOSS_EMOJIS = [
+            '🤡', // 0 Starter Guardian -> clown as requested
+            '🧙🏼‍♂️', // 1 Ice boss
+            '👨🏻‍🔧', // 2 Lightning boss
+            '🐲', // 3 Fire / Dragon boss
+            '🗻', // 4 Mountain boss
+            '🦂', // 5 Desert boss (thorny)
+            '🧛🏻‍♂️', // 6 Giant boss
+            '❄️', // 7 Snowy boss
+            '🧞‍♂️', // 8 Sand boss
+            '🦈', // 9 Reef boss / sea predator
+            '🧚🏻‍♀️', // 10 Sky boss
+            '🤖', // 11 Mech boss
+            '🦚', // 12 Fortress boss
+            '🧛🏻‍♀️', // 13 Swamp boss
+            '⚔️', // 14 Warrior boss
+            '👨🏻‍✈️', // 15 Prison boss
+            '👮🏻‍♂️', // 16 Justice boss
+            '🧜‍♂️', // 17 Ocean Palace boss
+            '🏇🏻', // 18 Forge boss
+            '🎠', // 19 Toy Kingdom boss
+            '🐘', // 20 Elephant boss
+            '🧚🏻', // 21 Candy boss
+            '🥷🏼', // 22 Samurai boss (fallback to kanji if font supports)
+            '🛰️', // 23 Future boss
+            '🗿'  // 24 Giant's Homeland boss
+        ];
+
+        // New islands (25-28) emojis
+        ENEMY_EMOJIS.push('🥷🏼'); // 25 LaughTale - party enemies
+        ENEMY_EMOJIS.push('👻'); // 26 Verth - lunar/moon enemies
+        ENEMY_EMOJIS.push('👨🏼‍🚀'); // 27 Void Temple - void enemies
+        ENEMY_EMOJIS.push('💂🏻‍♂️'); // 28 Great Kingdom of Dream - dream/royal enemies
+
+        BOSS_EMOJIS.push('🕵🏻'); // 25 LaughTale boss (party king)
+        BOSS_EMOJIS.push('👽'); // 26 Verth boss (alien/moon lord)
+        BOSS_EMOJIS.push('👩🏼‍🚀'); // 27 Void Temple boss (void sentinel)
+        BOSS_EMOJIS.push('🫅🏻'); // 28 Great Kingdom of Dream boss (dream monarch)
+
+        // Elite variants (stronger-looking emoji per theme)
+        const ELITE_EMOJIS = ENEMY_EMOJIS.map(e => {
+            // try to pick a slightly more imposing emoji where applicable
+            switch (e) {
+                case '🧌': return '👹';
+                case '🧊': return '🧊';
+                case '⚡': return '🌩️';
+                case '🔥': return '🐉';
+                case '🪨': return '🪨';
+                case '🌵': return '🦂';
+                case '🪜': return '🦴';
+                case '❄️': return '❄️';
+                case '🏜️': return '🦂';
+                case '🐠': return '🦈';
+                case '☁️': return '🌪️';
+                case '🤖': return '🤖';
+                case '🛡️': return '⚔️';
+                case '🪵': return '🐊';
+                case '🪖': return '🪖';
+                case '🔒': return '👮‍♂️';
+                case '🏛️': return '🏰';
+                case '🐙': return '🐙';
+                case '⚒️': return '⚒️';
+                case '🧸': return '🤡';
+                case '🐘': return '🐘';
+                case '🍬': return '🍬';
+                case '🗡️': return '🏯';
+                case '🤖': return '🤖';
+                case '🗿': return '🗿';
+                default: return e;
+            }
+        });
+
+        // Boss profiles and skills per island
+        const bossProfiles = {
+                0: { name: 'Starter Guardian', display: 'Starter Guardian', useSkill: (boss, ctxPlayer)=>{
+                        const P = ctxPlayer || player;
+                        // radial weak burst
+                        for (let i=0;i<10;i++) {
+                            const a = (i/10)*Math.PI*2 + (Math.random()-0.5)*0.2;
+                            projectiles.push(new Projectile(boss.x + Math.cos(a)*10, boss.y + Math.sin(a)*10, a, 4, 8, '#cccccc', 'basic', boss));
+                        }
+                    }},
+
+            1: { name: 'King Gluttonous', display: 'King Gluttonous', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // bite + spit: if near player do a heavy bite, else spit shrapnel
+                    const dist = Math.hypot(tx - boss.x, ty - boss.y);
+                    if (dist < 120) {
+                        // ground bite: heavy melee
+                        // if this was a player-aimed cast, dont damage the real player via proxy
+                        P.takeDamage(30 + boss.phase*10);
+                        effects.push({ x: boss.x, y: boss.y, radius: 50, life: 40, type: 'bossbite' });
+                    } else {
+                        // spit shards towards target
+                        const base = Math.atan2(ty-boss.y, tx-boss.x);
+                        for (let i=-2;i<=2;i++) projectiles.push(new Projectile(boss.x, boss.y, base + i*0.15, 7, 18 + boss.phase*6, '#8b5a2b', 'shard', boss));
+                    }
+                }},
+
+            2: { name: 'Deity Volt', display: 'Deity Volt', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // telegraphed chain lightning + storm
+                    boss._telegraphs.push({ type:'telegraphCircle', x: tx, y: ty, radius: 60, life: 45, color:'#ffff88' });
+                    CombatTimeline.schedule(()=>{ boss.chainLightningTelegraph(tx, ty); }, 500);
+                }},
+
+            3: { name: 'Merman Tyrant', display: 'Merman Tyrant', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // water surge: telegraph circle under target then burst spears
+                    boss._telegraphs.push({ type:'telegraphCircle', x: tx, y: ty, radius: 80, life: 45, color:'#66ccff' });
+                    CombatTimeline.schedule(()=>{
+                        for (let i=0;i<12;i++){
+                            const a = Math.atan2(ty-boss.y, tx-boss.x) + (Math.random()-0.5)*1.6 + (i/12)*Math.PI*2;
+                            projectiles.push(new Projectile(boss.x, boss.y, a, 6+Math.random()*4, 20 + boss.phase*8, '#66ccff', 'water', boss));
+                        }
+                    },600);
+                }},
+
+            4: { name: 'Leviathan Vena', display: 'Leviathan Vena', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // large sweeping current: spawn slow heavy projectiles and push effect
+                    boss._telegraphs.push({ type:'telegraphCircle', x: boss.x, y: boss.y, radius: 140, life: 50, color:'#446688' });
+                    CombatTimeline.schedule(()=>{
+                        for (let i=0;i<8;i++){
+                            const a = (i/8)*Math.PI*2 + (Math.random()-0.5)*0.3;
+                            projectiles.push(new Projectile(boss.x + Math.cos(a)*40, boss.y + Math.sin(a)*40, a, 5, 28 + boss.phase*10, '#225577', 'wave', boss));
+                        }
+                        // push target slightly (if real player, protect with proxy check)
+                        const dx = tx - boss.x; const dy = ty - boss.y; const d = Math.hypot(dx,dy)||1;
+                        if (!P._isBossFruitProxy) { P.x += (dx/d)*40; P.y += (dy/d)*40; }
+                    },700);
+                }},
+
+            5: { name: 'Madam Thorny', display: 'Madam Thorny', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const baseTx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const baseTy = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // thorn field: telegraph spots around target then spawn thorn spikes
+                    const spots = [];
+                    for (let i=0;i<5;i++){
+                        const a = Math.random()*Math.PI*2; const r = 80 + Math.random()*80;
+                        const sx = baseTx + Math.cos(a)*r, sy = baseTy + Math.sin(a)*r;
+                        spots.push({x:sx,y:sy}); boss._telegraphs.push({type:'telegraphCircle',x:sx,y:sy,radius:20,life:45,color:'#44aa44'});
+                    }
+                    CombatTimeline.schedule(()=>{
+                        spots.forEach(s=>{
+                            for (let k=0;k<6;k++) projectiles.push(new Projectile(s.x, s.y, (k/6)*Math.PI*2 + (Math.random()-0.5)*0.4, 5, 16 + boss.phase*6, '#2e8b57', 'thorn', boss));
+                            effects.push({x:s.x,y:s.y,radius:28,life:60,type:'thornfield'});
+                        });
+                    },650);
+                }},
+
+            6: { name: 'Giant Brute', display: 'Giant Brute', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // world splitter: heavy slam and radial shockwaves
+                    boss._telegraphs.push({type:'telegraphCircle',x:boss.x,y:boss.y,radius:80,life:50,color:'#aa7744'});
+                    CombatTimeline.schedule(()=>{
+                        for (let i=0;i<3;i++){
+                            const radius = 60 + i*40;
+                            // create visual ring and damage enemies/players
+                            effects.push({x:boss.x,y:boss.y,radius:radius,life:30,type:'shockwave'});
+                            // damage if within ring
+                            const d = Math.hypot(P.x-boss.x, P.y-boss.y);
+                            if (d < radius+20 && d > radius-40) P.takeDamage(20 + boss.phase*8);
+                        }
+                    },700);
+                }},
+
+            7: { name: 'King Gluttonous II', display: 'King Gluttonous II', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // variant: swallow then spit
+                    boss._telegraphs.push({type:'telegraphCircle',x:boss.x,y:boss.y,radius:90,life:40,color:'#b36b2b'});
+                    CombatTimeline.schedule(()=>{
+                        for (let i=0;i<12;i++) projectiles.push(new Projectile(boss.x, boss.y, (i/12)*Math.PI*2 + (Math.random()-0.5)*0.3, 6, 22+boss.phase*6, '#aa7f50', 'gore', boss));
+                    },600);
+                }},
+
+            8: { name: 'Lord Dry-Roc', display: 'Lord Dry-Roc', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // sand pillars telegraphed
+                    boss.firePillarTelegraph();
+                }},
+
+            9: { name: 'Squire Quake', display: 'Squire Quake', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // jumping quake: several localized stomps (centred around boss by default)
+                    for (let i=0;i<3;i++){
+                        CombatTimeline.schedule(()=>{
+                            const tx = boss.x + (Math.random()-0.5)*220; const ty = boss.y + (Math.random()-0.5)*220;
+                            effects.push({x:tx,y:ty,radius:40,life:40,type:'quake'});
+                            enemies.forEach(e=>{ const d=Math.hypot(e.x-tx,e.y-ty); if (d<60) e.takeDamage(18+boss.phase*6); });
+                            const dPlayer = Math.hypot(P.x-tx, P.y-ty); if (dPlayer<80) P.takeDamage(22+boss.phase*6);
+                        }, i*300);
+                    }
+                }},
+
+            10: { name: 'Deity Volt II', display: 'Deity Volt II', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    boss.chainLightningTelegraph();
+                }},
+
+            11: { name: 'Iron Dock Worker', display: 'Iron Dock Worker', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // mechanical arms: spawn fast heavy projectiles in arcs
+                    for (let i=0;i<6;i++) projectiles.push(new Projectile(boss.x, boss.y, (i/6)*Math.PI*2 + (Math.random()-0.5)*0.2, 9, 26 + boss.phase*6, '#888888', 'mech', boss));
+                }},
+
+            12: { name: 'Cipher Elite Nine', display: 'Cipher Elite Nine', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // spawn elite squad members around boss
+                    for (let i=0;i<3;i++){
+                        const ex = boss.x + (Math.random()-0.5)*120, ey = boss.y + (Math.random()-0.5)*120;
+                        const e = new Enemy(ex, ey, boss.islandType);
+                        e.maxHp *= 1.4; e.hp = e.maxHp; e.damage *= 1.3; e.behavior = 'flank';
+                        try { e.emoji = ELITE_EMOJIS[e.islandType] || e.emoji; e.isElite = true; } catch (err) {}
+                        enemies.push(e);
+                    }
+                    effects.push({x:boss.x,y:boss.y,radius:30,life:60,type:'summon'});
+                }},
+
+            13: { name: 'Admiral Frostbite', display: 'Admiral Frostbite', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    boss.iceConeTelegraph();
+                }},
+
+            14: { name: 'Snake Queen Han', display: 'Snake Queen Han', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // charm and venom arrows
+                    boss._telegraphs.push({type:'telegraphCircle',x:tx,y:ty,radius:50,life:45,color:'#66aa66'});
+                    CombatTimeline.schedule(()=>{
+                        for (let i=0;i<6;i++) projectiles.push(new Projectile(boss.x, boss.y, Math.atan2(ty-boss.y,tx-boss.x) + (i-3)*0.15, 8, 14+boss.phase*5, '#66aa33', 'venom', boss));
+                        // occasional charm: slow player movement briefly
+                        if (Math.random()<0.35 && !P._isBossFruitProxy) P.charmed = 120;
+                    },550);
+                }},
+
+            15: { name: 'Warden Toxicous', display: 'Warden Toxicous', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // spawn persistent poison clouds
+                    for (let i=0;i<4;i++){
+                        const px = boss.x + (Math.random()-0.5)*200, py = boss.y + (Math.random()-0.5)*200;
+                        effects.push({x:px,y:py,radius:50,life:220,type:'poisoncloud'});
+                        // damage over time zones implemented via projectiles that linger
+                        const p = new Projectile(px, py, 0, 0, 0, '#336633', 'gas', boss);
+                        p.life = 220; p.radius = 40; projectiles.push(p);
+                    }
+                }},
+
+            16: { name: 'Grand Admiral Vulcan', display: 'Grand Admiral Vulcan', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // prefer caster target when available
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    boss.lavaBurst(tx, ty);
+                }},
+
+            17: { name: 'Merman Tyrant II', display: 'Merman Tyrant II', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    boss.stormOfBolts();
+                }},
+
+            18: { name: 'Scientist V. Smoke', display: 'Scientist V. Smoke', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // gas bombs: telegraph small circles then explode
+                    for (let i=0;i<5;i++){
+                        const ax = boss.x + (Math.random()-0.5)*260, ay = boss.y + (Math.random()-0.5)*260;
+                        boss._telegraphs.push({type:'telegraphCircle',x:ax,y:ay,radius:26,life:60,color:'#aa8844'});
+                        CombatTimeline.schedule(()=>{
+                            for (let k=0;k<8;k++) projectiles.push(new Projectile(ax, ay, (k/8)*Math.PI*2 + (Math.random()-0.5)*0.3, 5, 16 + boss.phase*6, '#aa6633', 'gas', boss));
+                            effects.push({x:ax,y:ay,radius:40,life:80,type:'gasburst'});
+                        },700 + Math.random()*400);
+                    }
+                }},
+
+            19: { name: 'Warlord Señor String', display: 'Warlord Señor String', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // thread trap: spawn slow projectile webs that root
+                    for (let i=0;i<6;i++){
+                        const a = Math.random()*Math.PI*2; const sx = boss.x + Math.cos(a)*140, sy = boss.y + Math.sin(a)*140;
+                        boss._telegraphs.push({type:'telegraphCircle',x:sx,y:sy,radius:18,life:45,color:'#d0aaff'});
+                        CombatTimeline.schedule(()=>{
+                            const web = new Projectile(sx, sy, 0, 0, 0, '#c08cff', 'web', boss); web.life = 180; web.radius = 36; projectiles.push(web);
+                        },500 + Math.random()*200);
+                    }
+                }},
+
+            20: { name: 'Tusk General', display: 'Tusk General', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // stomp barrage
+                    for (let i=0;i<4;i++) CombatTimeline.schedule(()=>{
+                        const tx = boss.x + (Math.random()-0.5)*200, ty = boss.y + (Math.random()-0.5)*200;
+                        effects.push({x:tx,y:ty,radius:50,life:50,type:'stomp'});
+                        enemies.forEach(e=>{ const d=Math.hypot(e.x-tx,e.y-ty); if (d<60) e.takeDamage(20+boss.phase*8); });
+                        if (Math.hypot(P.x-tx,P.y-ty) < 80) P.takeDamage(26+boss.phase*8);
+                    }, i*300);
+                }},
+
+            21: { name: 'Empress Mother', display: 'Empress Mother', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // soul siphon: drain target for boss heal if nearby
+                    boss._telegraphs.push({type:'telegraphCircle',x:boss.x,y:boss.y,radius:120,life:40,color:'#ff88ff'});
+                    CombatTimeline.schedule(()=>{
+                        const d = Math.hypot(tx-boss.x, ty-boss.y);
+                        if (d < 120) {
+                            const dmg = 20 + boss.phase*8; P.takeDamage(dmg);
+                            boss.hp = Math.min(boss.maxHp, boss.hp + Math.floor(dmg*0.9));
+                            effects.push({x:tx,y:ty,radius:30,life:40,type:'siphon'});
+                        }
+                    },600);
+                }},
+
+            22: { name: 'Overlord Dragon', display: 'Overlord Dragon', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // call dragonSkill if present, else heavy flame breath towards target
+                    if (typeof boss.dragonSkill === 'function') boss.dragonSkill(tx, ty);
+                    else {
+                        for (let i=-2;i<=2;i++) projectiles.push(new Projectile(boss.x,boss.y,Math.atan2(ty-boss.y,tx-boss.x)+i*0.18,8,36+boss.phase*10,'#ff4400','dragon',boss));
+                    }
+                }},
+
+            23: { name: 'Dr. V-Tech', display: 'Dr. V-Tech', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    const tx = (boss && boss.targetX !== undefined) ? boss.targetX : P.x;
+                    const ty = (boss && boss.targetY !== undefined) ? boss.targetY : P.y;
+                    // spawn hologram drones (weak clone enemies) and laser bursts
+                    for (let i=0;i<3;i++){
+                        const hx = boss.x + (Math.random()-0.5)*140, hy = boss.y + (Math.random()-0.5)*140;
+                        const holo = new Enemy(hx, hy, boss.islandType); holo.maxHp = 30; holo.hp = holo.maxHp; holo.damage = 8; holo.behavior='chase';
+                        enemies.push(holo);
+                    }
+                    for (let i=0;i<6;i++) projectiles.push(new Projectile(boss.x, boss.y, Math.atan2(ty-boss.y,tx-boss.x) + (i-3)*0.12, 10, 20 + boss.phase*6, '#88ffdd', 'laser', boss));
+                }},
+
+            24: { name: 'Prince Great Axe', display: 'Prince Great Axe', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // heavy cleave: spinning axes
+                    for (let i=0;i<10;i++) projectiles.push(new Projectile(boss.x + Math.cos((i/10)*Math.PI*2)*30, boss.y + Math.sin((i/10)*Math.PI*2)*30, (i/10)*Math.PI*2, 6, 28 + boss.phase*8, '#cc3333', 'axe', boss));
+                }}
+            ,
+            25: { name: 'LaughTale Host', display: 'LaughTale Host', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // Party barrage: telegraph bursts around player then fire confetti projectiles and summon rowdy adds
+                    for (let i=0;i<6;i++) {
+                        const a = (i/6)*Math.PI*2 + (Math.random()-0.5)*0.6;
+                        const tx = P.x + Math.cos(a) * (140 + Math.random()*60);
+                        const ty = P.y + Math.sin(a) * (140 + Math.random()*60);
+                        boss._telegraphs.push({ type:'telegraphCircle', x: tx, y: ty, radius: 36, life: 44, color:'#ffdd88' });
+                        CombatTimeline.schedule(()=>{
+                            for (let k=0;k<8;k++) projectiles.push(new Projectile(tx, ty, Math.random()*Math.PI*2, 8 + Math.random()*4, 18 + boss.phase*4, '#ffd166', 'shard', boss));
+                            // small adds that chase player
+                            const add = new Enemy(tx + (Math.random()-0.5)*30, ty + (Math.random()-0.5)*30, boss.islandType);
+                            add.damage = Math.max(6, add.damage - 6); add.maxHp = Math.max(10, add.maxHp * 0.6);
+                            try { add.emoji = ELITE_EMOJIS[add.islandType] || add.emoji; add.isElite = true; } catch (e) {}
+                            enemies.push(add);
+                        }, 520 + Math.random()*260);
+                    }
+                }},
+
+            26: { name: 'Verth Lunarch', display: 'Verth Lunarch', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // Lunar gravity beams: telegraph a dark ring then fire slow heavy lunar bolts that pull
+                    const tx = P.x; const ty = P.y;
+                    boss._telegraphs.push({ type:'telegraphCircle', x: tx, y: ty, radius: 120, life: 56, color:'#333355' });
+                    CombatTimeline.schedule(()=>{
+                        for (let i=0;i<7;i++) {
+                            const a = Math.random()*Math.PI*2;
+                            const bolt = new Projectile(boss.x + Math.cos(a)*20, boss.y + Math.sin(a)*20, Math.atan2(ty - boss.y, tx - boss.x) + (Math.random()-0.5)*0.6, 4 + Math.random()*2, 26 + boss.phase*6, '#99aaff', 'meteor', boss);
+                            bolt.horzSpeed = (tx - bolt.x) / 120; bolt.targetY = ty; bolt.impactRadius = 80; projectiles.push(bolt);
+                        }
+                    }, 700);
+                }},
+
+            27: { name: 'Void Sentinel', display: 'Void Sentinel', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // Void telegraphs and dark bolts: spawn several small void spots that explode into shadow bolts
+                    for (let i=0;i<5;i++) {
+                        const ax = P.x + (Math.random()-0.5)*260; const ay = P.y + (Math.random()-0.5)*260;
+                        this._telegraphs.push({ type:'telegraphCircle', x: ax, y: ay, radius: 40, life: 50, color:'#0b0b0f' });
+                        CombatTimeline.schedule(()=>{
+                            for (let k=0;k<6;k++) projectiles.push(new Projectile(ax, ay, (k/6)*Math.PI*2 + (Math.random()-0.5)*0.6, 7 + Math.random()*3, 24 + boss.phase*6, '#6666ff', 'void', boss));
+                            effects.push({ x: ax, y: ay, radius: 64, life: 36, type: 'mirageshimmer', color: '#101020' });
+                        }, 600 + Math.random()*300);
+                    }
+                }},
+
+            28: { name: 'Dream Monarch', display: 'Dream Monarch', useSkill: (boss, ctxPlayer)=>{
+                    const P = ctxPlayer || player;
+                    // Dream field: telegraph a large area then spawn sleepy orbs and mirage illusions
+                    const cx = P.x; const cy = P.y;
+                    this._telegraphs.push({ type:'telegraphCircle', x: cx, y: cy, radius: 160, life: 72, color:'#d7b3ff' });
+                    CombatTimeline.schedule(()=>{
+                        // spawn sleepy orbs that home slowly
+                        for (let i=0;i<10;i++) {
+                            const a = Math.random()*Math.PI*2; const sx = cx + Math.cos(a)* (40 + Math.random()*140); const sy = cy + Math.sin(a)*(40 + Math.random()*140);
+                            const orb = new Projectile(sx, sy, Math.atan2(P.y - sy, P.x - sx), 3 + Math.random()*2, 8 + boss.phase*3, '#cdb7ff', 'prism', boss);
+                            orb.homing = true; projectiles.push(orb);
+                        }
+                        // illusions: spawn mirage fields that slow and confuse
+                        for (let j=0;j<4;j++) effects.push({ x: cx + (Math.random()-0.5)*120, y: cy + (Math.random()-0.5)*120, radius: 60, life: 180, type: 'miragefield' });
+                    }, 700);
+                }}
+        };
+
+        // Input handling
+        const keys = {};
+        const mouse = { 
+            x: 0, y: 0, 
+            leftPressed: false, 
+            rightPressed: false,
+            leftClicked: false,
+            rightClicked: false
+        };
+
+        // Unified skill key handler: route T/Z/X/C/V to fruit-specific methods
+        // Fruit system
+        const FRUITS = {
+            LIGHTNING: { 
+                name: 'Thunder God ⚡', 
+                category: 'zoan',
+                rarity: 'legendary',
+                color: '#FFFF66', 
+                damage: 48, 
+                speed: 12, 
+                cooldown: 800,
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+                // custom skill cooldowns (ms)
+
+
+
+                skillVCooldown: 14000
+            },
+            DRAGON: { 
+                name: 'Naga 🐉', 
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#FF4444', 
+                damage: 50, 
+                speed: 6, 
+                cooldown: 1200,
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+                // skill cooldowns (ms)
+
+
+
+
+                skillVCooldown: 14000,
+                // transform tuning
+                transformDurationMs: 8000
+            },
+            ICE: { 
+                name: 'Es ❄️', 
+                category: 'logia',
+                rarity: 'common',
+                color: '#44DDFF', 
+                damage: 30, 
+                speed: 6, 
+                cooldown: 1000,
+                // skill cooldowns (ms)
+
+
+
+                skillVCooldown: 20000,  // Ice Age (ultimate)
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+            RUBBER: { 
+                name: 'Rubber King 🥊', 
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#FF0055', 
+                damage: 40, 
+                speed: 12, 
+                cooldown: 3500,
+                // Skill cooldowns (ms)
+
+
+
+                skillVCooldown: 14000,
+                description: 'Gear 4: Kong Organ - Memunculkan banyak tangan Haki yang mengejar musuh secara otomatis.'
+            },
+            BLACKHOLE: { 
+                name: 'Black Hole 🕳️', 
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#1a0033', 
+                damage: 60, 
+                speed: 3, 
+                cooldown: 2000,
+                description: 'Lubang hitam yang menghisap musuh'
+            },
+            SHADOW: { 
+                name: 'Bayangan 👤', 
+                category: 'paramecia',
+                rarity: 'rare',
+                color: '#2d1b69', 
+                damage: 45, 
+                speed: 7, 
+                cooldown: 1500,
+                description: 'Menciptakan clone bayangan yang menyerang'
+            },
+
+            VOID_REAPER: {
+                name: 'Void Reaper 🍂🌑',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#6b3cff',
+                damage: 76, // initial sickle hit
+                trueDamage: 180, // damage applied after reap mark expires (true damage)
+                cooldown: 6000,
+                description: 'Death Harvest: spawn 3 giant shadow sickles, apply Reap Mark that detonates for true damage after 3s'
+            },
+
+            PHOENIX: {
+                name: 'Phoenix 🔥',
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#66ccff',
+                damage: 55,
+                speed: 6,
+                cooldown: 1800,
+                description: 'Menyulut dan meledakkan api, serta transformasi Zoan'
+            },
+
+            SIREN: {
+                name: 'Siren 🎵',
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#ff66cc',
+                damage: 20,
+                speed: 5,
+                cooldown: 2200,
+                description: 'Song of Lure: memikat musuh dan mengurangi damage mereka sementara'
+            },
+
+            TIDE: {
+                name: 'Tide 🌊',
+                category: 'logia',
+                rarity: 'epic',
+                color: '#33aaff',
+                damage: 30,
+                speed: 5,
+                cooldown: 2500,
+                description: 'Tidal Surge: gelombang yang mendorong/menarik musuh dan meninggalkan area yang memperlambat'
+            },
+
+            SEA_KING: {
+                name: 'Sea King 🌊👑',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#2ea8f6',
+                damage: 140,
+                speed: 6,
+                cooldown: 4000,
+                description: 'Tsunami Sweep: memanggil gelombang raksasa yang menyeret musuh, memberi damage overtime, lalu melempar mereka jauh ke belakang'
+            },
+
+            /* CARD removed due to stability/bug issues */
+
+            JACKPOT: {
+                name: 'Jackpot 🎰',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#ffdd33',
+                damage: 40,
+                speed: 0,
+                cooldown: 10000,
+                description: '777 Fever: spin a slot above your head. 777 -> coin explosion + massive damage; 🍒🍒🍒 -> potion rain (full heal); 💀💀💀 -> black nuke (AoE damage, slight self-damage).'
+            },
+
+            HELLGOD: {
+                name: 'Amaterasu 🔥🩸',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#660000',
+                damage: 150,
+                speed: 0,
+                cooldown: 5000,
+                description: 'Inferno Field: api hitam dengan efek stun and burn stacking.'
+            },
+
+            ROSE_THORN: {
+                name: 'Rose Thorn 🌹🗡️',
+                category: 'paramecia',
+                rarity: 'epic',
+                color: '#ff6688',
+                damage: 20,
+                speed: 0,
+                cooldown: 2000,
+                description: 'Thorn Orbit: 8 🌹berputar melindungi dan menyerang musuh.'
+            },
+
+            MAGNETION: {
+                name: 'Magnetion 🧲',
+                category: 'paramecia',
+                rarity: 'legendary',
+                color: '#c44c4c',
+                damage: 90,
+                speed: 0,
+                cooldown: 2600,
+                description: 'Magnetic Pull: menarik musuh ke pusat lalu meledak.'
+            },
+            SWORD_DEITY: {
+                name: 'Sword Deity 🗡️✨',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#aaddff',
+                damage: 40,
+                speed: 12,
+                cooldown: 3600,
+                description: 'Seven Heavenly Blades: memanggil 7 pedang melayang yang menyerang musuh dengan efek chain selama 5 detik.'
+            },
+
+            COLOSSUS: {
+                name: 'Colossus 🪨',
+                category: 'zoan',
+                rarity: 'rare',
+                color: '#8b6f4c',
+                damage: 70,
+                speed: 3,
+                cooldown: 3000,
+                description: 'Earth Slam: hentakan besar, damage area dan buff armor sementara'
+            },
+
+            MIRAGE: {
+                name: 'Mirage 🪄',
+                category: 'paramecia',
+                rarity: 'epic',
+                color: '#b3e6ff',
+                damage: 0,
+                speed: 0,
+                cooldown: 3000,
+                description: 'Mirage Field: buat area ilusi yang membingungkan musuh dan menampilkan efek distorsi'
+            },
+
+            VOLCANO: {
+                name: 'Volcano 🌋',
+                category: 'logia',
+                rarity: 'mythical',
+                color: '#ff4500',
+                damage: 90,
+                speed: 2,
+                cooldown: 4000,
+                // skill cooldowns (ms)
+
+
+
+                skillVCooldown: 20000, // Meteor Volcano ultimate
+                description: 'Eruption Burst: pilar lava dan semburan api besar'
+            },
+
+            CELESTIAL: {
+                name: 'Celestial ✨',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#ffe066',
+                damage: 65,
+                speed: 3,
+                cooldown: 2000,
+                description: 'Starfall: hujan bintang yang memberi damage dan stun singkat'
+            }
+
+            ,DOLL: {
+                name: 'Boneka 💂🏻‍♂️',
+                category: 'paramecia',
+                rarity: 'epic',
+                color: '#C79C6E',
+                damage: 0,
+                speed: 0,
+                cooldown: 3500,
+                description: 'Marionette Strings: kendalikan musuh untuk menyerang teman mereka selama 7 detik.'
+            }
+
+            ,SINGULARITY: {
+                name: 'Singularity 🌀',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#3a0066',
+                damage: 120,
+                speed: 0,
+                cooldown: 4200,
+                description: 'Pemain memegang singularitas mini yang mengikuti pergerakan. Setelah beberapa detik, meledak, memberi damage besar dan knockback ke musuh di radius. Proyektil musuh yang tertarik akan dihancurkan dan berubah jadi partikel energi.'
+            }
+
+            ,
+
+            // Spectacular new fruits
+            AURORA: {
+                name: 'Aurora 🌌',
+                category: 'logia',
+                rarity: 'mythical',
+                color: '#66ffcc',
+                damage: 5,
+                speed: 0,
+                cooldown: 1600,
+                description: 'Aurora: gelombang cahaya berwarna yang membekukan dan memberi shield.'
+            },
+            QUASAR: {
+                name: 'Quasar 🌠',
+                category: 'logia',
+                rarity: 'legendary',
+                color: '#7f7fff',
+                damage: 25,
+                speed: 12,
+                cooldown: 1400,
+                description: 'Quasar: ledakan energi kosmik yang menimbulkan DoT dan slow.'
+            },
+            ORIGIN: {
+                name: 'Origin ⏳',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#ffffff',
+                damage: 0,
+                speed: 0,
+                cooldown: 3000,
+                description: 'Origin: reset status, sembuhkan pemain dan hapus efek negatif.'
+            },
+            NEBULA: {
+                name: 'Nebula ☁️',
+                category: 'logia',
+                rarity: 'legendary',
+                color: '#aa66ff',
+                damage: 0,
+                speed: 0,
+                cooldown: 2000,
+                description: 'Nebula: kabut bintang yang membutakan musuh dan membuat pemain sementara invisible.'
+            },
+            SERAPH: {
+                name: 'Seraph 😇',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#ffd1a6',
+                damage: 75, // updated per rework
+                speed: 9,
+                cooldown: 5000, // 5 seconds
+                description: 'Seraph: Divine Intervention (Elysium Field) — ultimate crowd control, DoT and healing area.'
+            },
+
+            PRISM: {
+                name: 'Prism 🌈',
+                category: 'logia',
+                rarity: 'legendary',
+                color: '#7f7fff',
+                damage: 28,
+                speed: 16,
+                cooldown: 2200,
+                description: 'Prism: ledakan cahaya yang memantul, memantulkan sinar berwarna yang menembus musuh.'
+            },
+
+            HITO_HITO_DEWI: {
+                name: 'Hito Hito no Mi: Dewi Cinta ❤️',
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#ff6b9a',
+                damage: 36,
+                speed: 12,
+                cooldown: 6000,
+                description: 'Love Goddess: summon a giant heart that immobilizes and tethers enemies; explodes into chaining love arrows.'
+            },
+
+            HITO_MECHA: {
+                name: 'Hito Hito no Mi: Model Mecha 🤖',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#99aaff',
+                damage: 18,
+                speed: 0,
+                cooldown: 8000,
+                description: 'Sky Barrage Protocol: launches 100 auto-aim missiles over 5s. Missiles knockback and chain.'
+            },
+
+            BLOOM: {
+                name: 'Bloom 🌺 (Carnivorous Garden)',
+                category: 'paramecia',
+                rarity: 'rare',
+                color: '#ff77c2',
+                damage: 12,
+                speed: 0,
+                cooldown: 5000,
+                description: 'Carnivorous Garden: throw a seed that grows into a trap plant which swallows, chews, then spits enemies as projectiles.'
+            },
+
+            ECHO: {
+                name: 'Echo 🔊',
+                category: 'paramecia',
+                rarity: 'epic',
+                color: '#66ddff',
+                damage: 20,
+                speed: 0,
+                cooldown: 2600,
+                description: 'Echo: gelombang suara yang stun, mendorong musuh dan memantulkan proyektil.'
+            },
+
+            // Ancient Zoan (prehistoric beasts)
+            MAMMOTH: {
+                name: 'Mammoth 🦣',
+                category: 'zoan',
+                rarity: 'legendary',
+                color: '#b07a4f',
+                damage: 80,
+                speed: 5,
+                cooldown: 5000,
+                // Skill cooldowns (ms)
+
+
+
+
+                skillVCooldown: 22000, // Drought Disaster (ultimate)
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            SABERTOOTH: {
+                name: 'Sabertooth 🐆',
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#ff7a66',
+                damage: 36,
+                speed: 12,
+                cooldown: 2200,
+                // Skill tuning and cooldowns (ms)
+
+
+
+
+                skillVCooldown: 20000, // Fang Barrage (V) ultimate
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            PTERODACTYL: {
+                name: 'Pterodactyl 🦖',
+                category: 'zoan',
+                rarity: 'legendary',
+                color: '#88d1ff',
+                damage: 70,
+                speed: 10,
+                cooldown: 6000,
+                // Skill cooldowns (ms)
+
+
+
+
+                skillVCooldown: 22000, // V: Meteor Dive (ultimate)
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            TRICERATOPS: {
+                name: 'Triceratops 🦕',
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#9bbf6a',
+                damage: 64,
+                speed: 4,
+                cooldown: 5000,
+                // New skill tuning for Triceratops (T/Z/X/C/V)
+                // T: Iron Skin (transform) - defensive buff + reflect chance
+
+                // Z: Horn Thrust - melee penetration attack
+
+                // X: Bullet Charge - short dash
+
+                // C: Heliceratops - spin AoE DPS for duration
+
+                // V: General Cannon - ultimate beam
+                skillVCooldown: 24000,
+                // Transform tuning
+                transformDurationMs: 8000,
+                // Defense and reflect tuning
+                ironSkinArmorPct: 0.40, // +40% armor
+                ironSkinReflectChance: 0.25, // 25% chance to reflect on hit
+                ironSkinReflectPct: 0.10, // reflect 10% of incoming damage
+                // Horn thrust
+                hornPenetrationPct: 0.50, // ignores 50% enemy armor
+                // Heliceratops
+                heliceratopsDurationMs: 3000,
+                heliceratopsDps: 18, // per tick DPS
+                heliceratopsSlowPct: 0.5, // player movement slowed to 50%
+                // General Cannon
+                generalCannonDamage: 220,
+                generalCannonWidth: 40,
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            VELOCIRAPTOR: {
+                name: 'Velociraptor 🦴',
+                category: 'zoan',
+                rarity: 'rare',
+                color: '#a86cff',
+                damage: 28,
+                speed: 14,
+                cooldown: 3000,
+                description: 'Velociraptor: panggil pack raptor bayangan untuk menyerang musuh cepat.'
+            },
+
+            // Mythical animal fruits (new)
+            KIRIN: {
+                name: 'Kirin 🦄',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#ffd1f0',
+                damage: 40,
+                speed: 10,
+                cooldown: 3000,
+                // Skill cooldowns (ms)
+
+
+
+
+                skillVCooldown: 30000, // V: Wrath of Heaven (ultimate)
+                // Transform tuning
+                transformDurationMs: 8000,
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            GRIFFIN: {
+                name: 'Griffin 🦅🦁',
+                category: 'zoan',
+                rarity: 'legendary',
+                color: '#ffd27f',
+                damage: 65,
+                speed: 12,
+                cooldown: 3000,
+                description: 'Griffin: leap into the sky and dive onto target area for massive impact and knockback.'
+            },
+
+            GARUDA: {
+                name: 'Garuda 🦅',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#66ccff',
+                damage: 30,
+                speed: 10,
+                cooldown: 3000,
+                description: 'Garuda: summon a sky cyclone that pulls enemies and slices them with wind.'
+            },
+
+            FENRIR: {
+                name: 'Fenrir 🐺',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#0b0712',
+                damage: 72,
+                speed: 8,
+                cooldown: 1000,
+                // Skill-specific tuning
+
+
+
+
+                skillVCooldown: 45000, // World Eater (ultimate)
+                transformDurationMs: 12000,
+                description: 'Fenrir: Serigala Kiamat — kegelapan, kecepatan, dan ketakutan.'
+            },
+
+            QUETZALCOATL: {
+                name: 'Quetzalcoatl 🐍🪶',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#4fe0a0',
+                damage: 36,
+                speed: 10,
+                cooldown: 6000,
+                // Skill tuning for T/Z/X/C/V
+
+
+
+
+                skillVCooldown: 26000, // Green Sun (ultimate)
+                transformDurationMs: 8000,
+                venomDamage: 72, // total poison damage over time for Z
+                greenSunDamage: 220, // total poison damage over time for V
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            BAKU: {
+                name: 'Baku 🐘',
+                category: 'zoan',
+                rarity: 'epic',
+                color: '#c8c8ff',
+                damage: 44,
+                speed: 6,
+                cooldown: 1000,
+                description: 'Baku: consume nightmares (negative effects) from allies and release a cleansing shockwave.'
+            },
+
+            AZURE_DRAGON: {
+                name: 'Azure Dragon 🐉💧',
+                category: 'zoan',
+                rarity: 'mythical',
+                color: '#66b3ff',
+                damage: 58,
+                speed: 8,
+                cooldown: 2000,
+                // skill cooldowns (ms)
+
+
+
+
+                skillVCooldown: 24000, // Thunder Bagua (ultimate)
+                transformDurationMs: 8000,
+                description: 'Satu Ultimate sesuai kekuatan buah.',
+            },
+
+            GRAVITY: { 
+                name: 'Gravitasi 🌌', 
+                category: 'paramecia',
+                rarity: 'epic',
+                color: '#4a0e4e', 
+                damage: 50, 
+                speed: 2, 
+                cooldown: 2500,
+                description: 'Manipulasi gravitasi untuk mengontrol musuh'
+            }
+            ,SUN_GOD: {
+                name: 'Sun God ☀️',
+                category: 'paramecia',
+                rarity: 'mythical',
+                color: '#ffcc33',
+                damage: 220,
+                speed: 0,
+                cooldown: 5000, // very long cooldown for OP power
+                description: 'Summon a divine sun that ensnares enemies with radiant threads, burns them for 5s, then supernovas for massive knockback and damage.'
+            }
+        };
+
+        // Add ZENITH URSAGAR to the FRUITS registry
+        FRUITS.ZENITH_URSAGAR = {
+            name: 'ZENITH URSAGAR 🐻🌌',
+            category: 'zoan',
+            rarity: 'mythical',
+            color: '#bfeaff',
+            damage: 0,
+            speed: 0,
+            cooldown: 5000,
+            description: 'Mythical Zoan — Stellar Bear Titan. Skill: Astral Maul — dash-chain between enemies, build momentum, final star-crack that emits a rotating pull vortex.'
+        };
+
+        // Add CAPTAIN_HOOK fruit (Legendary Zoan) - Grapnel King
+        FRUITS.CAPTAIN_HOOK = {
+            name: 'Captain Hook 🪝',
+            category: 'zoan',
+            rarity: 'legendary',
+            color: '#8bd3ff',
+            damage: 72,
+            pullSpeed: 10,
+            smashDamage: 110,
+            markAoE: 48,
+            markDelay: 2000, // milliseconds
+            speed: 0,
+            cooldown: 5000,
+            description: 'Grapnel King: Throw 3 auto-aim hooks that pull enemies to you, then smash them away applying a timed mark that explodes for chained AoE damage.'
+        };
+
+        
+
+        // Simple Gacha system (returns fruit key string)
+        class Gacha {
+            constructor(pool = []) {
+                // pool: [{ id: 'ZENITH_URSAGAR', weight: 0.5 }, ...]
+                this.pool = pool.slice();
+                this._recalc();
+            }
+
+            _recalc() {
+                this.total = this.pool.reduce((s, p) => s + (p.weight || 1), 0);
+            }
+
+            rollKey() {
+                if (!this.pool || this.pool.length === 0) return null;
+                let r = Math.random() * this.total;
+                for (let entry of this.pool) {
+                    r -= (entry.weight || 1);
+                    if (r <= 0) return entry.id;
+                }
+                return this.pool[this.pool.length - 1].id;
+            }
+
+            // Convenience: give the rolled fruit to the player (sets player.fruit and updates UI)
+            rollGivePlayer() {
+                const id = this.rollKey();
+                if (!id) return null;
+                try {
+                    if (typeof player !== 'undefined' && player) {
+                        // grant as equipped fruit (you can change to inventory add if preferred)
+                        player.fruit = id;
+                        // update UI elements if present
+                        const fruitEl = document.getElementById('fruit');
+                        const typeEl = document.getElementById('fruitType');
+                        const rarityEl = document.getElementById('fruitRarity');
+                        if (fruitEl) fruitEl.textContent = FRUITS[id] ? FRUITS[id].name : id;
+                        if (typeEl) typeEl.textContent = FRUITS[id] ? FRUITS[id].category : '-';
+                        if (rarityEl) rarityEl.textContent = FRUITS[id] ? FRUITS[id].rarity : '-';
+                    }
+                } catch (e) { console.error('Gacha grant failed', e); }
+                return id;
+            }
+        }
+
+        // Initialize a global gacha pool and expose it
+        // Zenith is extremely rare (low weight). Adjust weights to taste.
+        window.gameGacha = new Gacha([
+            { id: 'LIGHTNING', weight: 40 },
+            { id: 'ICE', weight: 28 },
+            { id: 'RUBBER', weight: 20 },
+            { id: 'DRAGON', weight: 8 },
+            { id: 'QUASAR', weight: 3 },
+            { id: 'CELESTIAL', weight: 2 },
+            { id: 'ZENITH_URSAGAR', weight: 0.4 }
+        ]);
+
+        // Boss-fruit mapping: allow boss skills to be used as fruit skills by the player.
+
+        // Damage scaling helper: scale base damage by player/source level.
+        function computeScaledDamage(baseDamage, source) {
+            try {
+                const lvl = (source && typeof source.level === 'number') ? source.level : (typeof player !== 'undefined' && player && typeof player.level === 'number' ? player.level : 1);
+                const mult = 1 + Math.max(0, lvl - 1) * 0.04; // 4% per level
+                return Math.max(1, Math.floor(baseDamage * mult));
+            } catch (e) { return baseDamage; }
+        }
+        // Random range helper
+        function randRange(a, b) { return a + Math.random() * (b - a); }
+        // Apply poison to an enemy over time (durationMs total, evenly split ticks)
+        function applyPoisonToEnemy(enemy, durationMs, totalDamage) {
+            try {
+                if (!enemy || enemy.dead) return;
+                const tickMs = 500;
+                const ticks = Math.max(1, Math.floor(durationMs / tickMs));
+                const dmgPerTick = Math.max(1, Math.floor(totalDamage / ticks));
+
+                // accumulate if already poisoned
+                if (enemy._poisonInterval) {
+                    enemy._poisonRemaining = (enemy._poisonRemaining || 0) + durationMs;
+                    enemy._poisonDamage = (enemy._poisonDamage || 0) + totalDamage;
+                    return;
+                }
+
+                enemy._poisonRemaining = durationMs;
+                enemy._poisonDamage = totalDamage;
+                enemy._poisonInterval = setInterval(() => {
+                    try {
+                        if (!enemy || enemy.dead) { clearInterval(enemy._poisonInterval); enemy._poisonInterval = null; return; }
+                        enemy.takeDamage(dmgPerTick);
+                        effects.push({ x: enemy.x, y: enemy.y, radius: 10, life: 18, type: 'poisontick', color: '#4caf50' });
+                        enemy._poisonRemaining -= tickMs;
+                        if (enemy._poisonRemaining <= 0) {
+                            clearInterval(enemy._poisonInterval);
+                            enemy._poisonInterval = null;
+                            delete enemy._poisonRemaining;
+                            delete enemy._poisonDamage;
+                        }
+                    } catch (e) { clearInterval(enemy._poisonInterval); enemy._poisonInterval = null; }
+                }, tickMs);
+            } catch (e) { /* ignore */ }
+        }
+        // Helper: create a lightweight caster/proxy for skill execution so player/camera is not affected
+        function createSkillCaster(x, y, owner) {
+            return {
+                x: x,
+                y: y,
+                level: owner && owner.level ? owner.level : (player && player.level ? player.level : 1),
+                // minimal API to avoid errors in skills (takeDamage is no-op for proxy)
+                takeDamage() {},
+                _isSkillProxy: true,
+                // keep reference to owner for any required scaling/flags
+                __owner: owner || null
+            };
+        }
+        const bossFruitMap = {
+            'STARTER_GUARDIAN': 0,
+            'KING_GLUTTONOUS': 1,
+            'DEITY_VOLT': 2,
+            'MERMAN_TYRANT': 3,
+            'LEVIATHAN_VENA': 4,
+            'MADAM_THORNY': 5,
+            'GIANT_BRUTE': 6,
+            'KING_GLUTTONOUS_II': 7,
+            'LORD_DRYROC': 8,
+            'SQUIRE_QUAKE': 9,
+            'DEITY_VOLT_II': 10,
+            'IRON_DOCK_WORKER': 11,
+            'CIPHER_ELITE_NINE': 12,
+            'ADMIRAL_FROSTBITE': 13,
+            'SNAKE_QUEEN_HAN': 14,
+            'WARDEN_TOXICOUS': 15,
+            'GRAND_ADMIRAL_VULCAN': 16,
+            'MERMAN_TYRANT_II': 17,
+            'SCIENTIST_V_SMOKE': 18,
+            'WARLORD_SENOR_STRING': 19,
+            'TUSK_GENERAL': 20,
+            'EMPRESS_MOTHER': 21,
+            'OVERLORD_DRAGON': 22,
+            'DR_V_TECH': 23,
+            'PRINCE_GREAT_AXE': 24
+        };
+
+        // Register boss-fruits in FRUITS so they can be selected/used by the player
+        // We mark these with category 'bossfruit' so they are excluded from gacha and
+        // clearly identified as boss-only drops.
+        Object.keys(bossFruitMap).forEach((key, idx) => {
+            FRUITS[key] = {
+                name: key.replace(/_/g,' '),
+                category: 'bossfruit',
+                rarity: 'unique',
+                color: '#ffaaff',
+                damage: 0,
+                speed: 0,
+                cooldown: 4000,
+                description: 'Boss-fruit: hanya bisa diperoleh dari drop boss. ' + key.replace(/_/g,' ')
+            };
+        });
+
+        // Helper: execute a boss skill as a fruit by creating a Boss-like caster bound to player position
+        // Now accepts optional targetX/targetY so the skill can be aimed like normal fruits.
+        function executeBossFruitSkill(fruitKey, targetX, targetY, owner = player) {
+            const idx = bossFruitMap[fruitKey];
+            if (idx === undefined) return;
+            const profile = bossProfiles[idx];
+            if (!profile) return;
+
+            // Create a temporary boss-like caster that borrows Boss prototype methods
+            const caster = Object.create(Boss.prototype);
+            caster.x = owner.x;
+            caster.y = owner.y;
+            caster.phase = Math.min(3, Math.max(1, Math.floor(owner.level / 10) + 1));
+            caster.islandType = idx;
+            caster._fruitOwner = owner; caster.radius=30; caster.damage=25+owner.level*2;
+            caster._telegraphs = {push:(...items)=>effects.push(...items)};
+            caster.hp = caster.maxHp = 1;
+            caster.invulnerable = 0;
+            caster.spawnInvul = 0;
+
+            // If a target was provided (player aimed), attach it to caster for profiles to use
+            if (typeof targetX === 'number' && typeof targetY === 'number') {
+                caster.targetX = targetX;
+                caster.targetY = targetY;
+                caster.angle = Math.atan2(targetY - caster.y, targetX - caster.x);
+            } else {
+                caster.angle = player ? Math.atan2(mouse.y - player.y, mouse.x - player.x) : 0;
+            }
+
+            // Instead of swapping the global `player`, create a lightweight proxy object
+            // and pass it as an explicit second argument to profile.useSkill so the
+            // profile implementations can use `ctxPlayer` when needed.
+            let proxy = null;
+            if (typeof targetX === 'number' && typeof targetY === 'number' && typeof player !== 'undefined') {
+                const originalPlayer = owner;
+                proxy = Object.create(originalPlayer);
+                proxy.x = targetX;
+                proxy.y = targetY;
+                proxy.takeDamage = function(amount) {
+                    const targets=owner.isAI?[player]:enemies;
+                    for(const enemy of [...targets])if(Math.hypot(enemy.x-targetX,enemy.y-targetY)<120)enemy.takeDamage(computeScaledDamage(amount,owner));
+                };
+                proxy._isBossFruitProxy = true;
+            }
+
+            // Call the profile skill with caster as 'boss' and proxy (if present) as ctxPlayer
+            profile.useSkill(caster, proxy);
+        }
+
+        for(const [key,data] of Object.entries(ReferenceFruitData)){
+            if(FRUITS[key])for(const field of ['damage','speed','cooldown','pullSpeed','smashDamage','markAoE','markDelay','description']){
+                if(data[field]!==undefined)FRUITS[key][field]=data[field];
+            }
+        }
+        // Player class
+        class Player {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.level = 1;
+                this.hp = 100;
+                this.maxHp = 100;
+                this.xp = 0;
+                this.maxXp = 100;
+                this.damage = 25;
+                this.speed = 4;
+                this.radius = 18;
+                this.fruit = null;
+                this.gold = 0;
+                this.lastAttack = 0;
+                this.lastSkill = 0;
+                this.invulnerable = 0;
+                this.angle = 0;
+                // Dragon transform state
+                this.isDragon = false;
+                this.transformTimer = 0; // frames
+                // Zoan transform state
+                this.isZoan = false;
+                this.zoanTimer = 0;
+                // Regeneration buff
+                this.regenTimer = 0; // frames
+                this.regenAmount = 0; // per second
+                // Skill lock: prevent movement while certain skills active
+                this.stationaryUntil = 0;
+                // Inventory: 5 rows x 12 cols = 60 slots
+                this.inventory = {
+                    capacity: 60,
+                    items: [], // each item: { type: 'fruit'|'potion'|'coin'|'weapon', value: any }
+                    add(item) {
+                        // Prevent duplicate fruits from being stored
+                        if (item && item.type === 'fruit') {
+                            const exists = this.items.some(it => it.type === 'fruit' && it.value === item.value);
+                            if (exists) return false;
+                        }
+                        if (this.items.length >= this.capacity) return false;
+                        this.items.push(item);
+                        return true;
+                    },
+                    removeAt(index) {
+                        if (index < 0 || index >= this.items.length) return null;
+                        return this.items.splice(index, 1)[0];
+                    },
+                    findFruitIndex(fruitType) {
+                        return this.items.findIndex(it => it.type === 'fruit' && it.value === fruitType);
+                    }
+                };
+            }
+
+            update() {
+                if(this.isDragon && --this.transformTimer<=0)this.endDragonTransform();
+                if(this.isZoan && --this.zoanTimer<=0)this.endZoanTransform();
+                Voyage.movePlayer(this);
+                Voyage.processCombatInput(this);
+
+                // Interactions
+                if (keys['KeyE']) {
+                    this.checkInteractions();
+                    keys['KeyE'] = false; // Prevent spam
+                }
+
+                // Update invulnerability
+                if (this.invulnerable > 0) {
+                    this.invulnerable--;
+                }
+
+                // Regeneration processing
+                if (this.regenTimer > 0) {
+                    // heal small amount each second (assume 60fps)
+                    if (this.regenTimer % 60 === 0) {
+                        const heal = Math.min(this.maxHp - this.hp, this.regenAmount);
+                        this.hp += heal;
+                        spawnEffect({ x: this.x, y: this.y - 20, text: `+${heal} HP`, life: 40, type: 'healpickup', color:'#66ccff' });
+                    }
+                    this.regenTimer--;
+                }
+
+            }
+
+            basicAttack() {
+                // Create sword slash effect
+                const slashEffect = {
+                    x: this.x + Math.cos(this.angle) * 40,
+                    y: this.y + Math.sin(this.angle) * 40,
+                    radius: 35,
+                    life: 15,
+                    type: 'slash'
+                };
+                effects.push(slashEffect);
+
+                // Damage nearby enemies
+                enemies.forEach(enemy => {
+                    const dist = this.getDistance(enemy);
+                    if (dist < 70) {
+                        enemy.takeDamage(computeScaledDamage(Math.floor(this.damage * (this._sabertoothDamageMult || 1)), this));
+                        // Knockback
+                        const knockAngle = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                        enemy.x += Math.cos(knockAngle) * 15;
+                        enemy.y += Math.sin(knockAngle) * 15;
+
+                        // Quetzalcoatl passive while transformed: weak poison on basic attack
+                        try {
+                            if (this.fruit === 'QUETZALCOATL' && (this._quetzalTransformed || this.isZoan)) {
+                                applyPoisonToEnemy(enemy, 5000, computeScaledDamage(18, this));
+                                effects.push({ x: enemy.x, y: enemy.y, radius: 16, life: 40, type: 'venomburst', color: '#66cc77' });
+                            }
+                        } catch (e) { /* ignore */ }
+                    }
+                });
+
+                // Arena: if active, allow basic attacks to hit the other PvP combatant
+                try {
+                    if (typeof ArenaManager !== 'undefined' && ArenaManager.active && ArenaManager.ai) {
+                        const target = (this.isAI ? player : ArenaManager.ai);
+                        const d = Math.hypot(target.x - this.x, target.y - this.y);
+                        if (d < 70) {
+                            // apply damage and knockback similar to enemy hit
+                            target.takeDamage(computeScaledDamage(Math.floor(this.damage * (this._sabertoothDamageMult || 1)), this));
+                            const knockAngle = Math.atan2(target.y - this.y, target.x - this.x);
+                            target.x += Math.cos(knockAngle) * 15;
+                            target.y += Math.sin(knockAngle) * 15;
+                            // show hit effect
+                            effects.push({ x: target.x, y: target.y, radius: 14, life: 18, type: 'impact' });
+                            try { console.log('[Arena] basicAttack hit', this.isAI ? 'AI' : 'Player', '->', target.isAI ? 'AI' : 'Player', 'dmg=', this.damage); } catch(e) {}
+                        }
+                    }
+                } catch (e) { console.error('Arena basicAttack error', e); }
+            }
+
+            // Helper moved from prototype: set fruit (normalized)
+            setFruit(name) {
+                if (!name) { this.fruit = null; return; }
+                this.fruit = String(name).toUpperCase();
+                try {
+                    const el = document.getElementById('fruit');
+                    if (el) el.textContent = FRUITS[this.fruit] ? FRUITS[this.fruit].name : this.fruit;
+                    const typeEl = document.getElementById('fruitType');
+                    if (typeEl) typeEl.textContent = FRUITS[this.fruit] ? FRUITS[this.fruit].category : '-';
+                    const rarEl = document.getElementById('fruitRarity');
+                    if (rarEl) rarEl.textContent = FRUITS[this.fruit] ? FRUITS[this.fruit].rarity : '-';
+                } catch(e){}
+            }
+
+            takeDamage(amount) {
+                if (gameState.paused) return;
+                if (this.invulnerable > 0) return;
+                // apply shield first
+                if (this.shield && this.shield > 0) {
+                    const absorbed = Math.min(this.shield, amount);
+                    this.shield -= absorbed;
+                    amount -= absorbed;
+                    spawnEffect({ x: this.x, y: this.y - 10, text: `Shield -${absorbed}`, life: 40, type: 'damage', color: '#66ffcc' });
+                }
+                if (amount <= 0) return;
+                this.hp -= amount;
+                spawnEffect({ x: this.x, y: this.y - 20, text: `-${amount}`, life: 40, type: 'damage' });
+                // debug log when in Arena
+                try { if (typeof ArenaManager !== 'undefined' && ArenaManager.active) console.log('[Arena] takeDamage:', this.isAI ? 'AI' : 'Player', 'hp now', this.hp); } catch (e) {}
+
+                // If in Arena, register death to arena handler (rounds/lives) instead of instant end
+                try {
+                    if (this.hp <= 0 && typeof ArenaManager !== 'undefined' && ArenaManager.active) {
+                        ArenaManager.handleDeath(this);
+                        return; // skip normal respawn
+                    }
+                } catch (e) { console.error('takeDamage arena-check', e); }
+
+                if (this.hp <= 0) {
+                    // simple respawn/reset (non-arena)
+                    this.hp = Math.max(1, Math.floor(this.maxHp * 0.5));
+                    this.x = 100; this.y = 100;
+                    spawnEffect({ x: this.x, y: this.y, text: 'You Died', life: 80, type: 'death' });
+                }
+            }
+
+            getAttackCooldown() { return 450; }
+            fruitSkill() { return Voyage.castUltimate(this); }
+
+            checkInteractions() {
+                // Check fruit pickup
+                fruits.forEach((fruit, index) => {
+                    if (this.getDistance(fruit) < 40) {
+                        this.fruit = fruit.type;
+                        fruits.splice(index, 1);
+                        this.updateUI();
+                        
+                        // Show pickup effect
+                        const pickupEffect = {
+                            x: fruit.x,
+                            y: fruit.y,
+                            radius: 20,
+                            life: 30,
+                            type: 'pickup',
+                            color: FRUITS[fruit.type].color
+                        };
+                        effects.push(pickupEffect);
+                    }
+                });
+
+                // Check portal
+                portals.forEach(portal => {
+                    if (this.getDistance(portal) < 50) {
+                        this.changeIsland(portal.targetIsland);
+                    }
+                });
+            }
+
+            changeIsland(islandIndex) {
+                ReworkedUltimates.cancel(this);
+                CombatTimeline.clear();
+                this.armor=0;this.shield=0;this.regenTimer=0;
+                if(this.isZoan)this.endZoanTransform();
+                if(this.isDragon)this.endDragonTransform();
+                if (islandIndex !== gameState.currentIsland) {
+                    gameState.currentIsland = islandIndex;
+                    this.generateIsland();
+                    
+                    // Heal player when changing islands
+                    this.hp = Math.min(this.maxHp, this.hp + 20);
+                    this.updateUI();
+                }
+            }
+
+            generateIsland() {
+                // Clear current entities
+                enemies.length = 0;
+                fruits.length = 0;
+                portals.length = 0;
+                projectiles.length = 0;
+                effects.length = 0;
+                droppedItems.length = 0;
+                specialAttacks.length = 0;
+
+                // Generate enemies
+                // Implement phase-island wave: spawn one big wave of normals (25) and set phase flags
+                const PHASE_NORMALS = 25;
+                gameState.phaseActive = true;
+                gameState.phaseTotalNormals = PHASE_NORMALS;
+                gameState.phaseNormalsSpawned = 0;
+                gameState.phaseBossSpawned = false;
+                gameState.phaseBossDefeated = false;
+
+                for (let i = 0; i < PHASE_NORMALS; i++) {
+                    let x, y;
+                    do {
+                        x = Math.random() * (GAME_WIDTH - 200) + 100;
+                        y = Math.random() * (GAME_HEIGHT - 200) + 100;
+                    } while (Math.sqrt(Math.pow(x - this.x, 2) + Math.pow(y - this.y, 2)) < 140);
+
+                    let e;
+                    const curTheme = gameState.islands[gameState.currentIsland] && gameState.islands[gameState.currentIsland].theme;
+                    if ((curTheme === 'lava' || curTheme === 'fire') && Math.random() < 0.5) {
+                        e = new LavaEnemy(x, y, gameState.currentIsland);
+                    } else {
+                        e = new Enemy(x, y, gameState.currentIsland);
+                    }
+
+                    
+
+                    // assign random behavior (kept simple)
+                    const behaviors = ['chase','patrol','flank','dodge'];
+                    e.behavior = behaviors[Math.floor(Math.random() * behaviors.length)];
+
+                    enemies.push(e);
+                    gameState.phaseNormalsSpawned++;
+                }
+
+                // Generate boss: for phase-style islands we DO NOT spawn the boss immediately
+                // The boss will be spawned by the phase wave logic in the main game loop
+                // (this allows the initial wave of normals to appear first). If an island
+                // should have an immediate boss (non-phase island), spawn it only when
+                // phaseActive is false.
+                if (gameState.currentIsland > 0 && !gameState.phaseActive) {
+                    const boss = new Boss(
+                        GAME_WIDTH - 100,
+                        GAME_HEIGHT - 100,
+                        gameState.currentIsland
+                    );
+                    enemies.push(boss);
+                }
+
+                // Lava island special: generate lava pits and extra lava enemies
+                const _theme = gameState.islands[gameState.currentIsland] && gameState.islands[gameState.currentIsland].theme;
+                if (_theme === 'lava' || _theme === 'fire') {
+                    lavaPits.length = 0;
+                    const pitCount = 4 + Math.floor(Math.random() * 3);
+                    for (let i = 0; i < pitCount; i++) {
+                        const px = Math.random() * (GAME_WIDTH - 300) + 150;
+                        const py = Math.random() * (GAME_HEIGHT - 300) + 150;
+                        lavaPits.push({ x: px, y: py, rx: 60 + Math.random() * 50, ry: 36 + Math.random() * 30, glowColor: 'rgba(255,120,40,0.9)', coreColor: 'rgba(120,20,0,0.9)' });
+                    }
+
+                    // Spawn a few specialized lava enemies near pits
+                    for (let i = 0; i < Math.min(6, enemyCount); i++) {
+                        const pit = lavaPits[Math.floor(Math.random() * lavaPits.length)];
+                        const ex = pit.x + (Math.random() - 0.5) * (pit.rx * 2 + 80);
+                        const ey = pit.y + (Math.random() - 0.5) * (pit.ry * 2 + 80);
+                        const len = new LavaEnemy(ex, ey, gameState.currentIsland);
+                        enemies.push(len);
+                    }
+                } else {
+                    lavaPits.length = 0;
+                }
+
+                // Generate fruits (exclude boss-only fruits from world spawns)
+                if (Math.random() < 0.8) {
+                    const fruitTypes = Object.keys(FRUITS).filter(k => FRUITS[k] && FRUITS[k].category !== 'bossfruit');
+                    if (fruitTypes.length > 0) {
+                        const randomFruit = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
+                        const fruit = new Fruit(
+                            Math.random() * (GAME_WIDTH - 300) + 150,
+                            Math.random() * (GAME_HEIGHT - 300) + 150,
+                            randomFruit
+                        );
+                        fruits.push(fruit);
+                    }
+                }
+
+                // NOTE: top-of-map portal icons removed so island progression remains controlled
+                // by boss drops (world-space portals). World portals spawned by bosses still
+                // get created in Boss.die(). If you want a small map UI later, re-enable here.
+
+                this.updateUI();
+            }
+
+            getDistance(target) {
+                return Math.sqrt(Math.pow(target.x - this.x, 2) + Math.pow(target.y - this.y, 2));
+            }
+
+            gainXP(amount) {
+                this.xp += amount;
+                if (this.xp >= this.maxXp) {
+                    this.levelUp();
+                }
+                this.updateUI();
+            }
+
+            levelUp() {
+                this.level++;
+                this.xp = 0;
+                this.maxXp = Math.floor(this.maxXp * 1.3);
+                this.maxHp += 25;
+                this.hp = this.maxHp;
+                this.damage += 8;
+                this.speed += 0.2;
+                
+                // Level up effect
+                const levelEffect = {
+                    x: this.x,
+                    y: this.y,
+                    radius: 50,
+                    life: 60,
+                    type: 'levelup'
+                };
+                effects.push(levelEffect);
+                
+                this.updateUI();
+            }
+
+            takeDamage(amount) {
+                if (gameState.paused) return;
+                if (this.invulnerable > 0) return;
+                
+                amount=Math.max(0,amount)*(1-(this._ultimateGuard||0));
+                if(this.shield>0){const absorbed=Math.min(this.shield,amount);this.shield-=absorbed;amount-=absorbed;}
+                if(amount<=0){this.updateUI();return;}
+                this.hp -= amount;
+                this.invulnerable = 60; // 1 second of invulnerability
+                
+                if (this.hp <= 0) {
+                    this.hp = this.maxHp;
+                    this.x = 100;
+                    this.y = 100;
+                    ReworkedUltimates.cancel(this);
+                    // Lose some XP on death
+                    this.xp = Math.max(0, this.xp - 20);
+                }
+                this.updateUI();
+            }
+
+            updateUI() {
+                document.getElementById('level').textContent = this.level;
+                document.getElementById('hp').textContent = this.hp;
+                document.getElementById('maxHp').textContent = this.maxHp;
+                document.getElementById('xp').textContent = this.xp;
+                document.getElementById('maxXp').textContent = this.maxXp;
+                document.getElementById('fruit').textContent = this.fruit ? FRUITS[this.fruit].name : 'Tidak Ada';
+                document.getElementById('fruitType').textContent = this.fruit ? (FRUITS[this.fruit].category || '-') : '-';
+                document.getElementById('fruitRarity').textContent = this.fruit ? (FRUITS[this.fruit].rarity || '-') : '-';
+                // Transform timer shows remaining seconds for either dragon or zoan (prefer zoan if active)
+                let seconds = 0;
+                if (this.isZoan) seconds = Math.ceil(this.zoanTimer / 60);
+                else if (this.isDragon) seconds = Math.ceil(this.transformTimer / 60);
+                document.getElementById('transformTimer').textContent = seconds;
+                document.getElementById('gold').textContent = this.gold;
+                document.getElementById('invGold').textContent = this.gold;
+                document.getElementById('islandName').textContent = gameState.islands[gameState.currentIsland].name;
+                document.getElementById('enemyCount').textContent = enemies.length;
+                // show dragon status in UI when transformed
+                if (this.isDragon) {
+                    document.getElementById('fruit').textContent += ' (Naga)';
+                }
+                if (this.isZoan) {
+                    document.getElementById('fruit').textContent += ' (Zoan)';
+                }
+                // Regen indicator
+                if (this.regenTimer > 0) {
+                    document.getElementById('fruit').textContent += ' (Regenerasi)';
+                }
+            }
+
+            // Inventory UI render
+            renderInventoryUI() {
+                const grid = document.getElementById('inventoryGrid');
+                if (!grid) return;
+                grid.innerHTML = '';
+                // total slots = capacity (5x12)
+                for (let i = 0; i < this.inventory.capacity; i++) {
+                    const slot = document.createElement('div');
+                    slot.style.width = '64px';
+                    slot.style.height = '64px';
+                    slot.style.background = 'rgba(255,255,255,0.02)';
+                    slot.style.border = '1px solid rgba(255,255,255,0.05)';
+                    slot.style.display = 'flex';
+                    slot.style.alignItems = 'center';
+                    slot.style.justifyContent = 'center';
+                    slot.style.borderRadius = '6px';
+                    slot.style.cursor = 'pointer';
+                    slot.dataset.index = i;
+
+                    const item = this.inventory.items[i];
+                    if (item) {
+                        // show simple label/icon
+                        const el = document.createElement('div');
+                        el.style.textAlign = 'center';
+                        el.style.fontSize = '12px';
+                        el.style.lineHeight = '14px';
+                        if (item.type === 'fruit') {
+                            const icon = document.createElement('img');
+                            icon.src=FruitArt.uri(item.value);icon.alt=FruitArt.name(item.value);
+                            icon.width=38;icon.height=38;el.appendChild(icon);
+                            const label=document.createElement('div');label.textContent=FruitArt.name(item.value);el.appendChild(label);
+                        } else if (item.type === 'potion') {
+                            el.textContent = `Potion`;
+                        } else if (item.type === 'coin') {
+                            el.textContent = `${item.value}G`;
+                        } else {
+                            el.textContent = item.value || 'Item';
+                        }
+                        slot.appendChild(el);
+                        slot.style.background = 'rgba(255,255,255,0.06)';
+                    }
+
+                    // click to use / inspect
+                    slot.addEventListener('click', (ev) => {
+                        const idx = parseInt(ev.currentTarget.dataset.index);
+                        this.onInventoryClick(idx);
+                    });
+
+                    grid.appendChild(slot);
+                }
+                document.getElementById('invGold').textContent = this.gold;
+            }
+
+            onInventoryClick(index) {
+                const item = this.inventory.items[index];
+                if (!item) return;
+                // using fruit: apply same logic as pickup
+                if (item.type === 'fruit') {
+                    // apply fruit
+                    this.fruit = item.value;
+                    
+                    spawnEffect({ x: this.x, y: this.y, text: `${FRUITS[this.fruit].name}`, life: 50, type:'fruitpickup', color: FRUITS[this.fruit].color });
+                    // remove from inventory
+                    this.inventory.items.splice(index, 1);
+                    this.updateUI();
+                    this.renderInventoryUI();
+                    return;
+                }
+                // coin in inventory: convert to gold
+                if (item.type === 'coin') {
+                    this.gold += item.value;
+                    spawnEffect({ x: this.x, y: this.y, text: `+${item.value} Gold`, life: 40, type: 'goldpickup', color: '#FFD700' });
+                    this.inventory.items.splice(index, 1);
+                    this.updateUI();
+                    this.renderInventoryUI();
+                    return;
+                }
+                // potion: heal immediately
+                if (item.type === 'potion') {
+                    const heal = Math.min(item.value, this.maxHp - this.hp);
+                    this.hp += heal;
+                    spawnEffect({ x: this.x, y: this.y, text: `+${heal} HP`, life: 40, type: 'healpickup', color:'#00FF00' });
+                    this.inventory.items.splice(index, 1);
+                    this.updateUI();
+                    this.renderInventoryUI();
+                    return;
+                }
+            }
+
+            draw() {
+                ctx.save();
+                
+                // Flicker effect when invulnerable
+                if (this.invulnerable > 0 && Math.floor(this.invulnerable / 5) % 2) {
+                    ctx.globalAlpha = 0.5;
+                }
+                
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                // Body (pirate or dragon when transformed)
+                if (this._ultimateMotion && this._ultimateMotion.key!=="DRAGON") {
+                    // The active ultimate controller draws the transformed avatar.
+                } else if (!this.isDragon && !this.isZoan) {
+                    ctx.rotate(-this.angle);
+                    PirateArt.drawHero(ctx, this);
+                    ctx.rotate(this.angle);
+                } else if (this.isZoan) {
+                    // Zoan form - beastly, faster
+                    ctx.fillStyle = '#6ab04c';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, this.radius + 6, this.radius + 6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Horn/ears
+                    ctx.fillStyle = '#4e9440';
+                    ctx.beginPath();
+                    ctx.moveTo(-this.radius, -6);
+                    ctx.lineTo(-this.radius - 10, -14);
+                    ctx.lineTo(-this.radius + 6, -4);
+                    ctx.closePath();
+                    ctx.fill();
+                } else {
+                    // Dragon form - larger, fiercer
+                    ctx.fillStyle = '#cc4422';
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, this.radius + 8, this.radius + 4, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Dragon head horn
+                    ctx.fillStyle = '#ffcc88';
+                    ctx.beginPath();
+                    ctx.moveTo(this.radius + 6, -6);
+                    ctx.lineTo(this.radius + 20, -12);
+                    ctx.lineTo(this.radius + 6, 6);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Dragon eye
+                    ctx.fillStyle = '#ffee55';
+                    ctx.beginPath();
+                    ctx.arc(6, -6, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                
+                if ((this.isDragon || this.isZoan) && !this._ultimateMotion) {
+                // Pirate hat
+                ctx.fillStyle = '#8B4513';
+                ctx.beginPath();
+                ctx.arc(-2, -12, 15, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Eye patch
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(-8, -3, 4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Sword
+                ctx.fillStyle = '#C0C0C0';
+                ctx.fillRect(15, -3, 20, 6);
+                ctx.fillStyle = '#8B4513';
+                ctx.fillRect(33, -6, 8, 12);
+                
+                }
+
+                // Fruit power indicator
+                if (this.fruit) {
+                    ctx.fillStyle = FRUITS[this.fruit].color;
+                    ctx.beginPath();
+                    ctx.save();
+                    const illustratedForm = !this.isDragon && !this.isZoan;
+                    if (illustratedForm) ctx.rotate(-this.angle);
+                    ctx.arc(0, illustratedForm ? -this.radius * 3.8 : -25, 5, 0, Math.PI * 2);
+                    ctx.restore();
+                    ctx.fill();
+                }
+                
+                ctx.restore();
+                // Always draw health above the player sprite.
+                try {
+                    if (true) {
+                        const hpPct = Math.max(0, Math.min(1, (this.hp || 0) / (this.maxHp || 1)));
+                        const barW = 64; const barH = 8;
+                        const bx = this.x - barW / 2;
+                        const by = this.y - (this.radius || 18) * 4.2;
+                        ctx.save();
+                        // background
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                        ctx.fillRect(bx - 2, by - 2, barW + 4, barH + 4);
+                        // empty bar
+                        ctx.fillStyle = 'rgba(120,120,120,0.4)';
+                        ctx.fillRect(bx, by, barW, barH);
+                        // health fill
+                        ctx.fillStyle = this.isAI ? 'rgba(220,80,80,0.95)' : 'rgba(80,200,220,0.95)';
+                        ctx.fillRect(bx, by, Math.max(2, Math.floor(barW * hpPct)), barH);
+                        // border
+                        ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.strokeRect(bx - 2, by - 2, barW + 4, barH + 4);
+                        // level text
+                        ctx.fillStyle = 'white'; ctx.font = '11px Arial'; ctx.textAlign = 'center'; ctx.fillText(`${Math.ceil(this.hp)} / ${this.maxHp}`, this.x, by - 6);
+                        ctx.restore();
+                    }
+                } catch (e) { /* ignore */ }
+            }
+        }
+
+        // Enemy class
+        class Enemy {
+            constructor(x, y, islandType = 0) {
+                this.x = x;
+                this.y = y;
+                this.maxHp = 60 + islandType * 30;
+                this.hp = this.maxHp;
+                this.damage = 15 + islandType * 8;
+                this.speed = 1.2 + islandType * 0.4;
+                this.radius = 15;
+                this.lastAttack = 0;
+                this.islandType = islandType;
+                this.angle = 0;
+                this.stunned = 0;
+                this.frozen = 0;
+                // Simple behavior tree fields
+                // behavior: 'chase' | 'patrol' | 'flank' | 'dodge'
+                this.behavior = 'chase';
+                this.behaviorState = {}; // arbitrary state per behavior
+                // patrol target point (for patrol behavior)
+                this._patrolTarget = null;
+                // cooldowns to avoid spamming dodge/flank
+                this._lastDodge = 0;
+                this._lastFlank = 0;
+                // assign emoji avatar based on island mapping; fallback to default
+                try {
+                    this.emoji = ENEMY_EMOJIS[this.islandType] || '👾';
+                } catch (e) {
+                    this.emoji = '👾';
+                }
+            }
+
+            update() {
+                // Update status effects
+                // decrement invulnerability/spawn invul timers
+                if (this.invulnerable && this.invulnerable > 0) this.invulnerable--;
+                if (this.spawnInvul && this.spawnInvul > 0) this.spawnInvul--;
+                if (this.stunned > 0) this.stunned--;
+                if (this.frozen > 0) {
+                    this.frozen--;
+                    return; // Can't move when frozen
+                }
+
+                // Decrement simple behavior timers
+                if (this._lastDodge && this._lastDodge > 0) this._lastDodge--;
+                if (this._lastFlank && this._lastFlank > 0) this._lastFlank--;
+
+                // Burning damage over time
+                if (this.burning && this.burning > 0) {
+                    if (this.burning % 30 === 0) { // damage tick every 30 frames
+                        this.takeDamage(4);
+                    }
+                    this.burning--;
+                }
+
+                // Amaterasu: hellburn stacking DoT + immobilize while active
+                if (this.hellburn && this.hellburn > 0) {
+                    // each second, increase stacking damage
+                    if (this.hellburn % 30 === 0) {
+                        this.hellStacks = (this.hellStacks || 0) + 1;
+                        // compute incremental damage based on stacks and fruit base
+                        const base = FRUITS.HELLGOD ? FRUITS.HELLGOD.damage : 150;
+                        const perStack = Math.max(1, Math.floor(base * 0.04));
+                        const dmg = perStack * this.hellStacks;
+                        try { this.takeDamage(computeScaledDamage(dmg, this.hellOwner || player)); } catch (e) {}
+                    }
+                    // decrement duration
+                    this.hellburn--;
+                    // while burning from Amaterasu, enemy cannot act or move
+                    return;
+                }
+
+                // Blue burn (phoenix) damage over time
+                if (this.blueburn && this.blueburn > 0) {
+                    if (this.blueburn % 30 === 0) { // tick every 30 frames
+                        this.takeDamage(6);
+                    }
+                    this.blueburn--;
+                }
+
+                // Raptor bleed (Velociraptor rework) - small physical DoT applied per pounce
+                if (this.raptorBleed && this.raptorBleed > 0) {
+                    if (this.raptorBleed % 30 === 0) {
+                        try { this.takeDamage(this.raptorBleedDmg || 5); } catch (e) {}
+                    }
+                    this.raptorBleed--;
+                }
+                // Elysium stun (Divine Intervention) - immune to movement/attacks while >0
+                if (this._elysiumStun && this._elysiumStun > 0) {
+                    // occasional halo particle to show binding
+                    if (Math.random() < 0.05) effects.push({ x: this.x, y: this.y, radius: 6 + Math.random() * 6, life: 26, type: 'seraphimpact' });
+                    this._elysiumStun--;
+                    // while stunned, skip all other AI and avoid moving
+                    return;
+                }
+                // Quasar DoT
+                if (this.quasarDot && this.quasarDot > 0) {
+                    if (this.quasarDot % 30 === 0) {
+                        this.takeDamage(3);
+                    }
+                    this.quasarDot--;
+                }
+
+                // Reap Mark: delayed true-damage marker applied by Void Reaper
+                if (this.reapMark) {
+                    if (this.reapMark.life > 0) {
+                        this.reapMark.life--;
+                    } else {
+                        // explode for true damage (bypass invulnerability)
+                        const td = (this.reapMark.trueDamage !== undefined) ? this.reapMark.trueDamage : (FRUITS.VOID_REAPER ? FRUITS.VOID_REAPER.trueDamage : 160);
+                        // explosion visual
+                        effects.push({ x: this.x, y: this.y, radius: 48, life: 36, type: 'voidExplosion', color: '#8a3cff' });
+                        // apply true damage directly (bypass invul)
+                        this.hp -= td;
+                        effects.push({ x: this.x, y: this.y - 20, text: td.toString(), life: 36, type: 'damage' });
+                        delete this.reapMark;
+                        if (this.hp <= 0) {
+                            this.die();
+                            return;
+                        }
+                    }
+                }
+
+                // Controlled by Doll Doll no Mi: force attack nearest other enemy
+                if (this.controlled && this.controlled > 0) {
+                    this.controlled--;
+                    // find nearest other enemy
+                    let nearest = null; let nd = Infinity;
+                    enemies.forEach(en => { if (en === this) return; const d = Math.hypot(en.x - this.x, en.y - this.y); if (d < nd) { nd = d; nearest = en; } });
+                    if (nearest) {
+                        // move toward nearest other enemy and attack when close
+                        this.angle = Math.atan2(nearest.y - this.y, nearest.x - this.x);
+                        const cspeed = Math.min(this.speed * 1.1, MAX_ENEMY_SPEED);
+                        this.x += Math.cos(this.angle) * cspeed;
+                        this.y += Math.sin(this.angle) * cspeed;
+
+                        // when in range, hit the allied enemy (deal small damage)
+                        if (Math.hypot(nearest.x - this.x, nearest.y - this.y) < 32) {
+                            // small friendly damage
+                            nearest.takeDamage(Math.max(4, Math.floor(this.damage * 0.6)));
+                            // puppet visual on strike
+                            effects.push({ x: nearest.x, y: nearest.y, radius: 16, life: 16, type: 'puppetAura', color: '#c79c6e' });
+                        }
+                    }
+
+                    // while controlled, skip normal decision/behavior
+                    if (this.controlled <= 0) {
+                        delete this._controlledSource;
+                    }
+                    return; // skip normal AI while puppet-controlled
+                }
+
+                // Decide and run behavior (very simple behavior tree)
+                this.decideBehavior();
+                this.updateBehavior();
+
+                // Charm, slow, confused status processing
+                if (this.charmed && this.charmed > 0) this.charmed--;
+                if (this.slowed && this.slowed > 0) this.slowed--;
+                if (this.confused && this.confused > 0) {
+                    this.confused--;
+                    // while confused, wander randomly
+                    this.x += (Math.random() - 0.5) * 4;
+                    this.y += (Math.random() - 0.5) * 4;
+                }
+
+                // Move towards player, but respect charm/slow
+                if (!this.charmed || this.charmed <= 0) {
+                    this.angle = Math.atan2(player.y - this.y, player.x - this.x);
+                    let baseSpeed = Math.min(this.speed, MAX_ENEMY_SPEED);
+                    let currentSpeed = this.stunned > 0 ? baseSpeed * 0.3 : baseSpeed;
+                    if (this.slowed && this.slowed > 0) currentSpeed *= 0.5;
+                    this.x += Math.cos(this.angle) * currentSpeed;
+                    this.y += Math.sin(this.angle) * currentSpeed;
+                } else {
+                    // when charmed, they stand still or wander slightly
+                    this.angle += (Math.random() - 0.5) * 0.1;
+                }
+
+                // Keep in bounds
+                this.x = Math.max(this.radius, Math.min(GAME_WIDTH - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(GAME_HEIGHT - this.radius, this.y));
+
+                // Attack player if close
+                const dist = player.getDistance(this);
+                const now = Date.now();
+                if (dist < 40 && now - this.lastAttack > 1500) {
+                    if (!this.charmed || this.charmed <= 0) {
+                        player.takeDamage(this.damage - (player.armor || 0));
+                        this.lastAttack = now;
+
+                        // Attack effect
+                        const attackEffect = {
+                            x: this.x,
+                            y: this.y,
+                            radius: 25,
+                            life: 10,
+                            type: 'attack'
+                        };
+                        effects.push(attackEffect);
+                    }
+                }
+
+                // Restore damage when charm expires
+                if ((!this.charmed || this.charmed <= 0) && this.origDamage) {
+                    this.damage = this.origDamage;
+                    delete this.origDamage;
+                }
+            }
+
+            // Very small behavior system: pick from chase/patrol/flank/dodge
+            decideBehavior() {
+                // If currently stunned/frozen, keep immobile
+                if (this.stunned > 0 || this.frozen > 0) {
+                    this.behavior = 'none';
+                    return;
+                }
+
+                // If there are nearby projectiles heading towards enemy, prefer dodge
+                const incoming = projectiles.find(p => {
+                    // simple check: projectile within 180px and roughly aimed at enemy
+                    const d = Math.hypot(p.x - this.x, p.y - this.y);
+                    if (d > 180) return false;
+                    // compute angle from projectile to enemy and compare to projectile angle
+                    const angTo = Math.atan2(this.y - p.y, this.x - p.x);
+                    const diff = Math.abs(Math.atan2(Math.sin(angTo - p.angle), Math.cos(angTo - p.angle)));
+                    return diff < 0.6; // within ~34 degrees
+                });
+                if (incoming && this._lastDodge <= 0) {
+                    this.behavior = 'dodge';
+                    return;
+                }
+
+                // If far away from player, sometimes patrol
+                const pdist = Math.hypot(player.x - this.x, player.y - this.y);
+                if (pdist > 280 && Math.random() < 0.35) {
+                    this.behavior = 'patrol';
+                    return;
+                }
+
+                // If somewhat near, sometimes attempt to flank
+                if (pdist > 120 && pdist < 360 && Math.random() < 0.45 && this._lastFlank <= 0) {
+                    this.behavior = 'flank';
+                    return;
+                }
+
+                // Default: chase player directly
+                this.behavior = 'chase';
+            }
+
+            updateBehavior() {
+                switch (this.behavior) {
+                    case 'patrol':
+                        this.behaviorPatrol();
+                        break;
+                    case 'flank':
+                        this.behaviorFlank();
+                        break;
+                    case 'dodge':
+                        this.behaviorDodge();
+                        break;
+                    case 'chase':
+                        this.behaviorChase();
+                        break;
+                    default:
+                        // none or unrecognized: stay idle
+                        break;
+                }
+            }
+
+            behaviorChase() {
+                // face player and move towards
+                this.angle = Math.atan2(player.y - this.y, player.x - this.x);
+                const baseSpeed = Math.min(this.speed, MAX_ENEMY_SPEED);
+                const vx = Math.cos(this.angle) * baseSpeed;
+                const vy = Math.sin(this.angle) * baseSpeed;
+                this.x += vx;
+                this.y += vy;
+            }
+
+            behaviorPatrol() {
+                // get or pick a patrol target
+                if (!this._patrolTarget || Math.hypot(this._patrolTarget.x - this.x, this._patrolTarget.y - this.y) < 24) {
+                    // pick a new point around spawn area
+                    const range = 180 + Math.random() * 120;
+                    const angle = Math.random() * Math.PI * 2;
+                    this._patrolTarget = { x: this.x + Math.cos(angle) * range, y: this.y + Math.sin(angle) * range };
+                }
+                const ang = Math.atan2(this._patrolTarget.y - this.y, this._patrolTarget.x - this.x);
+                this.angle = ang;
+                const patrolSpeed = Math.min(this.speed * 0.9, MAX_ENEMY_SPEED);
+                this.x += Math.cos(ang) * patrolSpeed;
+                this.y += Math.sin(ang) * patrolSpeed;
+            }
+
+            behaviorFlank() {
+                // attempt to move to a side of the player (left/right) and then approach
+                // stateful: remember chosen side
+                if (!this.behaviorState.side) {
+                    this.behaviorState.side = (Math.random() < 0.5) ? -1 : 1; // -1 left, 1 right
+                    this.behaviorState.duration = 40 + Math.floor(Math.random() * 60);
+                }
+                const side = this.behaviorState.side;
+                // compute flank position offset from player
+                const px = player.x;
+                const py = player.y;
+                const baseAngle = Math.atan2(this.y - py, this.x - px); // angle from player to enemy
+                const flankAngle = baseAngle + side * Math.PI / 2;
+                const flankDist = 120 + Math.random() * 80;
+                const targetX = px + Math.cos(flankAngle) * flankDist;
+                const targetY = py + Math.sin(flankAngle) * flankDist;
+
+                // move towards flank target
+                const ang = Math.atan2(targetY - this.y, targetX - this.x);
+                this.angle = ang;
+                const flankSpeed = Math.min(this.speed * 1.05, MAX_ENEMY_SPEED);
+                this.x += Math.cos(ang) * flankSpeed;
+                this.y += Math.sin(ang) * flankSpeed;
+
+                this.behaviorState.duration--;
+                if (this.behaviorState.duration <= 0) {
+                    this.behaviorState = {};
+                    this._lastFlank = 90; // cooldown before flanking again
+                }
+            }
+
+            behaviorDodge() {
+                // try to move perpendicular to the incoming projectile direction
+                // find the most threatening projectile
+                let threat = null;
+                let bestScore = 9999;
+                projectiles.forEach(p => {
+                    const d = Math.hypot(p.x - this.x, p.y - this.y);
+                    if (d > 220) return;
+                    const angTo = Math.atan2(this.y - p.y, this.x - p.x);
+                    const diff = Math.abs(Math.atan2(Math.sin(angTo - p.angle), Math.cos(angTo - p.angle)));
+                    const score = d + diff * 200;
+                    if (score < bestScore) { bestScore = score; threat = p; }
+                });
+                if (!threat) {
+                    // fallback: small random dodge
+                    const a = Math.random() * Math.PI * 2;
+                    const dodgeSmall = Math.min(this.speed * 2.2, MAX_ENEMY_SPEED * 2.8);
+                    this.x += Math.cos(a) * dodgeSmall;
+                    this.y += Math.sin(a) * dodgeSmall;
+                    this._lastDodge = 40;
+                    return;
+                }
+                const angToProj = Math.atan2(threat.y - this.y, threat.x - this.x);
+                // move perpendicular
+                const dodgeDir = angToProj + Math.PI / 2 * ((Math.random() < 0.5) ? -1 : 1);
+                const dodgeAmt = Math.min(this.speed * 2.5, MAX_ENEMY_SPEED * 3.2);
+                this.x += Math.cos(dodgeDir) * dodgeAmt;
+                this.y += Math.sin(dodgeDir) * dodgeAmt;
+                this._lastDodge = 50;
+            }
+
+            takeDamage(amount) {
+                if (gameState.paused) return;
+                // respect invulnerability (spawn protection or skills)
+                if (this.invulnerable && this.invulnerable > 0) return;
+
+                this.hp -= amount;
+                
+                // Damage number effect
+                const damageEffect = {
+                    x: this.x,
+                    y: this.y - 20,
+                    text: amount.toString(),
+                    life: 30,
+                    type: 'damage'
+                };
+                effects.push(damageEffect);
+                
+                if (this.hp <= 0) {
+                    this.die();
+                }
+            }
+
+            die() {
+                player.gainXP(25 + this.islandType * 15);
+                player.gold += 5 + this.islandType * 3;
+
+                // Random item drop
+                this.dropRandomItem();
+
+                // Death effect
+                const deathEffect = {
+                    x: this.x,
+                    y: this.y,
+                    radius: 30,
+                    life: 20,
+                    type: 'death'
+                };
+                effects.push(deathEffect);
+
+                const index = enemies.indexOf(this);
+                if (index > -1) {
+                    enemies.splice(index, 1);
+                }
+            }
+
+            dropRandomItem() {
+                const dropChance = Math.random();
+                
+                if (dropChance < 0.3) { // 30% chance for coin
+                    const coinValue = 10 + this.islandType * 5;
+                    const coin = new DroppedItem(this.x, this.y, 'coin', coinValue);
+                    droppedItems.push(coin);
+                } else if (dropChance < 0.5) { // 20% chance for potion
+                    const healAmount = 25 + this.islandType * 10;
+                    const potion = new DroppedItem(this.x, this.y, 'potion', healAmount);
+                    droppedItems.push(potion);
+                }
+                // 35% chance for no drop
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Frozen effect (keep as before)
+                if (this.frozen > 0) {
+                    ctx.fillStyle = 'rgba(100, 200, 255, 0.5)';
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius + 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                PirateArt.drawEnemy(ctx, this);
+
+                // Health bar (keep at same world coords/size)
+                const barWidth = 30;
+                const barHeight = 4;
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(-barWidth/2, -this.radius * 2.35, barWidth, barHeight);
+                ctx.fillStyle = '#00ff00';
+                ctx.fillRect(-barWidth/2, -this.radius * 2.35, barWidth * (this.hp / this.maxHp), barHeight);
+
+                ctx.restore();
+
+                // Behavior indicator (world-space): small colored dot above enemy showing current behavior
+                const bx = this.x;
+                const by = this.y - this.radius * 2.35 - 6;
+                let bcolor = 'rgba(255,0,0,0.9)'; // chase = red
+                if (this.behavior === 'patrol') bcolor = 'rgba(0,150,255,0.95)';
+                else if (this.behavior === 'flank') bcolor = 'rgba(255,140,0,0.95)';
+                else if (this.behavior === 'dodge') bcolor = 'rgba(255,220,0,0.95)';
+                else if (this.behavior === 'none') bcolor = 'rgba(180,180,180,0.6)';
+
+                ctx.save();
+                ctx.beginPath();
+                ctx.fillStyle = bcolor;
+                ctx.arc(bx, by, 3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Boss class
+        // Lava-specific enemy (immune to lava, bursts on death)
+        class LavaEnemy extends Enemy {
+            constructor(x, y, islandType) {
+                super(x, y, islandType);
+                this.radius = 18;
+                this.maxHp = Math.floor(this.maxHp * 0.9);
+                this.hp = this.maxHp;
+                this.damage = Math.floor(this.damage * 1.1);
+                this.lavaImmune = true;
+            }
+
+            update() {
+                // Lava enemies move a bit faster and sometimes spit lava projectiles
+                super.update();
+                if (Math.random() < 0.005) {
+                    const ang = Math.atan2(player.y - this.y, player.x - this.x) + (Math.random() - 0.5) * 0.6;
+                    projectiles.push(new Projectile(this.x, this.y, ang, 6, 14, '#ff7733', 'dragon', this));
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // subtle molten glow behind emoji
+                ctx.fillStyle = 'rgba(255,140,60,0.9)';
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.radius * 1.1, this.radius * 0.9, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                PirateArt.drawEnemy(ctx, this);
+
+                ctx.restore();
+            }
+        }
+
+        class Boss extends Enemy {
+            constructor(x, y, islandType) {
+                super(x, y, islandType);
+                // make bosses tougher overall
+                this.maxHp = 600 + islandType * 250;
+                this.hp = this.maxHp;
+                this.damage = 60 + islandType * 25;
+                this.speed = 1;
+                this.radius = 25;
+                this.lastSkill = 0;
+                this.isBoss = true;
+
+                // assign boss emoji based on island mapping
+                try { this.emoji = BOSS_EMOJIS[this.islandType] || '👑'; } catch (e) { this.emoji = '👑'; }
+
+                // Phase system
+                this.phase = 1; // 1,2,3
+                this.enraged = false;
+                this._telegraphs = []; // pending telegraph visuals created by boss
+                this._lastPhaseChange = Date.now();
+                // spawn invulnerability frames to prevent instant-kill from stray effects
+                this.invulnerable = 0;
+                this.spawnInvul = 0; // frames of protection right after spawn
+            }
+
+            update() {
+                super.update();
+
+                // Phase check (HP thresholds)
+                const pct = (this.hp / this.maxHp) * 100;
+                if (pct <= 33 && this.phase < 3) {
+                    this.phase = 3;
+                    this.onPhaseChange(3);
+                } else if (pct <= 66 && this.phase < 2) {
+                    this.phase = 2;
+                    this.onPhaseChange(2);
+                }
+
+                // Boss special skills with quicker cadence in higher phases
+                const now = Date.now();
+                const skillInterval = 4000 / Math.max(1, this.phase * 0.9);
+                if (now - this.lastSkill > skillInterval) {
+                    this.useSkill();
+                    this.lastSkill = now;
+                }
+
+                // update telegraph visuals life (kept here so boss can own them)
+                for (let i = this._telegraphs.length - 1; i >= 0; i--) {
+                    const t = this._telegraphs[i];
+                    t.life -= 1;
+                    if (t.life <= 0) this._telegraphs.splice(i, 1);
+                }
+            }
+
+            useSkill() {
+                // Prefer per-island bossProfiles if defined
+                const profile = bossProfiles[this.islandType];
+                if (profile && typeof profile.useSkill === 'function') {
+                    try { profile.useSkill(this); } catch (e) { /* ignore profile errors */ }
+                    return;
+                }
+
+                // Fallback: Phase-aware telegraphed skills by island type (legacy)
+                switch (this.islandType) {
+                    case 1: // Ice boss
+                        if (this.phase === 1) this.iceAttack();
+                        else if (this.phase === 2) this.iceConeTelegraph();
+                        else this.iceStorm();
+                        break;
+                    case 2: // Fire boss
+                        if (this.phase === 1) this.fireAttack();
+                        else if (this.phase === 2) this.firePillarTelegraph();
+                        else this.lavaBurst();
+                        break;
+                    case 3: // Lightning boss
+                        if (this.phase === 1) this.lightningAttack();
+                        else if (this.phase === 2) this.chainLightningTelegraph();
+                        else this.stormOfBolts();
+                        break;
+                }
+            }
+
+            onPhaseChange(newPhase) {
+                // apply simple buffs and spawn minions
+                this.enraged = true;
+                if (newPhase === 2) {
+                    this.damage += 10;
+                    this.speed += 0.3;
+                    // spawn two adds near boss
+                    for (let i = 0; i < 2; i++) {
+                        const m = new Enemy(this.x + (Math.random() - 0.5) * 80, this.y + (Math.random() - 0.5) * 80, this.islandType);
+                        // mark as add (slightly stronger) and set elite emoji
+                        try { m.emoji = ELITE_EMOJIS[m.islandType] || m.emoji; m.isElite = true; } catch (e) {}
+                        enemies.push(m);
+                    }
+                    effects.push({ x: this.x, y: this.y, radius: 40, life: 60, type: 'mammothdust' });
+                } else if (newPhase === 3) {
+                    this.damage += 20;
+                    this.speed += 0.6;
+                    // larger visual
+                    effects.push({ x: this.x, y: this.y, radius: 90, life: 120, type: 'aurorafield' });
+                    // spawn a stronger add
+                    const big = new Enemy(this.x + 60, this.y + 60, this.islandType);
+                    big.maxHp *= 1.2; big.hp = big.maxHp; big.damage *= 1.2;
+                    try { big.emoji = ELITE_EMOJIS[big.islandType] || big.emoji; big.isElite = true; } catch (e) {}
+                    enemies.push(big);
+                }
+            }
+
+            // TELEGRAPHED & PHASE SKILLS (fire examples + generic telegraph helpers)
+            firePillarTelegraph() {
+                // mark several spots around player then spawn pillars
+                const spots = [];
+                for (let i = 0; i < 3; i++) {
+                    const angle = (i / 3) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+                    const dist = 120 + Math.random() * 80;
+                    const sx = (this.targetX ?? player.x) + Math.cos(angle) * dist;
+                    const sy = (this.targetY ?? player.y) + Math.sin(angle) * dist;
+                    spots.push({ x: sx, y: sy });
+                    // telegraph visual owned by boss
+                    this._telegraphs.push({ type: 'telegraphCircle', x: sx, y: sy, radius: 36, life: 45, color: '#ff7744' });
+                }
+                // after telegraph delay spawn pillars
+                CombatTimeline.schedule(() => {
+                    spots.forEach(s => {
+                        for (let i = 0; i < 6; i++) {
+                            const p = new Projectile(s.x, s.y, (i / 6) * Math.PI * 2, 4, 18 + this.phase * 6, '#ff6633', 'dragon', this);
+                            projectiles.push(p);
+                        }
+                        // small lava pit effect
+                        effects.push({ x: s.x, y: s.y, radius: 40, life: 60, type: 'lavaburn' });
+                    });
+                }, 700);
+            }
+
+            lavaBurst() {
+                // phase 3 ultimate: burst multiple fireballs towards player with telegraph ring
+                this._telegraphs.push({ type: 'telegraphCircle', x: (this.targetX ?? player.x), y: (this.targetY ?? player.y), radius: 80, life: 50, color: '#ffbb66' });
+                CombatTimeline.schedule(() => {
+                    for (let i = 0; i < 10; i++) {
+                        const ang = Math.atan2((this.targetY ?? player.y) - this.y, (this.targetX ?? player.x) - this.x) + (Math.random() - 0.5) * 1.2;
+                        const proj = new Projectile(this.x, this.y, ang, 9 + Math.random() * 4, 30 + this.phase * 6, '#ff3300', 'dragon', this);
+                        projectiles.push(proj);
+                    }
+                }, 800);
+            }
+
+            // ICE & LIGHTNING telegraphed placeholders (keep simple)
+            iceConeTelegraph() {
+                // telegraph a cone in front of boss (towards player)
+                const angle = Math.atan2((this.targetY ?? player.y) - this.y, (this.targetX ?? player.x) - this.x);
+                this._telegraphs.push({ type: 'telegraphLine', x: this.x, y: this.y, angle: angle, length: 220, life: 40, color: '#66ddff' });
+                CombatTimeline.schedule(() => {
+                    // spawn multiple ice projectiles in cone
+                    for (let i = -2; i <= 2; i++) {
+                        const a = angle + i * 0.18;
+                        projectiles.push(new Projectile(this.x, this.y, a, 6, 36 + this.phase * 4, '#44ddff', 'ice', this));
+                    }
+                }, 600);
+            }
+
+            iceStorm() {
+                // radial ice storm
+                for (let i = 0; i < 16; i++) {
+                    const a = (i / 16) * Math.PI * 2 + (Math.random() - 0.5) * 0.2;
+                    projectiles.push(new Projectile(this.x, this.y, a, 4 + Math.random() * 2, 22 + this.phase * 3, '#88eeff', 'ice', this));
+                }
+            }
+
+            chainLightningTelegraph() {
+                // telegraph small marks on 4 nearby enemies then strike
+                const targets = enemies.slice(0).sort((a,b)=>Math.hypot(a.x-this.x,a.y-this.y)-Math.hypot(b.x-this.x,b.y-this.y)).slice(0,4);
+                targets.forEach(t => this._telegraphs.push({ type: 'telegraphCircle', x: t.x, y: t.y, radius: 28, life: 40, color: '#ffff66' }));
+                CombatTimeline.schedule(()=>{
+                    targets.forEach(t=>{
+                        const ang = Math.atan2(t.y - this.y, t.x - this.x);
+                        projectiles.push(new Projectile(this.x, this.y, ang, 10, 26 + this.phase*4, '#ffff66', 'lightning', this));
+                    });
+                }, 550);
+            }
+
+            stormOfBolts() {
+                for (let i=0;i<8;i++) {
+                    const ang = Math.atan2((this.targetY ?? player.y) - this.y, (this.targetX ?? player.x) - this.x) + (Math.random()-0.5)*2.2;
+                    projectiles.push(new Projectile(this.x, this.y, ang, 10 + Math.random()*4, 30 + this.phase*6, '#ffff00', 'lightning', this));
+                }
+            }
+
+            iceAttack() {
+                // Circular ice attack
+                for (let i = 0; i < 12; i++) {
+                    const angle = (i / 12) * Math.PI * 2;
+                    const projectile = new Projectile(
+                        this.x, this.y, angle, 4, 30, '#44ddff', 'ice'
+                    );
+                    projectiles.push(projectile);
+                }
+            }
+
+            fireAttack() {
+                // Fire breath towards player
+                const angle = Math.atan2((this.targetY ?? player.y) - this.y, (this.targetX ?? player.x) - this.x);
+                for (let i = -0.6; i <= 0.6; i += 0.1) {
+                    const projectile = new Projectile(
+                        this.x, this.y, angle + i, 5, 35, '#ff4444', 'dragon'
+                    );
+                    projectiles.push(projectile);
+                }
+            }
+
+            lightningAttack() {
+                // Lightning bolts
+                for (let i = 0; i < 6; i++) {
+                    const angle = Math.atan2((this.targetY ?? player.y) - this.y, (this.targetX ?? player.x) - this.x) + (Math.random() - 0.5) * 1.5;
+                    const projectile = new Projectile(
+                        this.x, this.y, angle, 8, 25, '#ffff00', 'lightning'
+                    );
+                    projectiles.push(projectile);
+                }
+            }
+
+            die() {
+                player.gainXP(150 + this.islandType * 75);
+                player.gold += 50 + this.islandType * 25;
+                
+                // Boss guaranteed drops
+                this.dropBossItems();
+                
+                // Epic death effect
+                for (let i = 0; i < 10; i++) {
+                    const deathEffect = {
+                        x: this.x + (Math.random() - 0.5) * 60,
+                        y: this.y + (Math.random() - 0.5) * 60,
+                        radius: 20 + Math.random() * 20,
+                        life: 40 + Math.random() * 20,
+                        type: 'bossdeath'
+                    };
+                    effects.push(deathEffect);
+                }
+                
+                const index = enemies.indexOf(this);
+                if (index > -1) {
+                    enemies.splice(index, 1);
+                }
+
+                // If we are in a phase island flow, spawn a portal randomly and mark phase complete
+                if (gameState.phaseActive) {
+                    // random portal location away from player
+                    let px, py;
+                    do {
+                        px = Math.random() * (GAME_WIDTH - 300) + 150;
+                        py = Math.random() * (GAME_HEIGHT - 300) + 150;
+                    } while (Math.hypot(px - (this.targetX ?? player.x), py - (this.targetY ?? player.y)) < 120);
+
+                    let nextIsland;
+                    if (gameState.currentIsland === gameState.islands.length - 1) {
+                        // last island -> choose a random different island as next
+                        const total = gameState.islands.length;
+                        const choices = [];
+                        for (let i = 0; i < total; i++) if (i !== gameState.currentIsland) choices.push(i);
+                        nextIsland = choices[Math.floor(Math.random() * choices.length)];
+                    } else {
+                        nextIsland = gameState.currentIsland + 1;
+                    }
+                    const portal = new Portal(px, py, nextIsland);
+                    portals.push(portal);
+                    gameState.phaseBossDefeated = true;
+                    gameState.phaseActive = false;
+
+                    // notify player
+                    spawnEffect({ x: px, y: py, text: 'Portal terbuka!', life: 120, type: 'powerParticle' });
+                }
+            }
+
+            dropBossItems() {
+                // Boss always drops multiple items
+                
+                // Guaranteed big coin
+                const bigCoin = new DroppedItem(this.x - 30, this.y, 'coin', 100 + this.islandType * 50);
+                droppedItems.push(bigCoin);
+                
+                // Guaranteed big potion
+                const bigPotion = new DroppedItem(this.x + 30, this.y, 'potion', 75 + this.islandType * 25);
+                droppedItems.push(bigPotion);
+                
+                // Guaranteed rare fruit (choose from non-boss fruits)
+                const nonBossFruitTypes = Object.keys(FRUITS).filter(k => FRUITS[k] && FRUITS[k].category !== 'bossfruit');
+                if (nonBossFruitTypes.length > 0) {
+                    const rareFruit = nonBossFruitTypes[Math.floor(Math.random() * nonBossFruitTypes.length)];
+                    const fruitDrop = new DroppedItem(this.x, this.y - 30, 'fruit', rareFruit);
+                    droppedItems.push(fruitDrop);
+                }
+                
+                // Extra random drops
+                for (let i = 0; i < 2; i++) {
+                    const dropType = Math.random();
+                    let item;
+                    
+                    if (dropType < 0.4) {
+                        item = new DroppedItem(
+                            this.x + (Math.random() - 0.5) * 80, 
+                            this.y + (Math.random() - 0.5) * 80, 
+                            'coin', 
+                            20 + this.islandType * 10
+                        );
+                    } else if (dropType < 0.7) {
+                        item = new DroppedItem(
+                            this.x + (Math.random() - 0.5) * 80, 
+                            this.y + (Math.random() - 0.5) * 80, 
+                            'potion', 
+                            40 + this.islandType * 15
+                        );
+                    } else {
+                        const randomFruit = nonBossFruitTypes[Math.floor(Math.random() * nonBossFruitTypes.length)];
+                        item = new DroppedItem(
+                            this.x + (Math.random() - 0.5) * 80, 
+                            this.y + (Math.random() - 0.5) * 80, 
+                            'fruit', 
+                            randomFruit
+                        );
+                    }
+                    droppedItems.push(item);
+                }
+                // Very small chance to drop the boss-fruit for this boss
+                // Reduced to ~5% to make boss fruits extremely rare and only obtainable via boss.
+                if (Math.random() < 0.05) { // ~5% chance
+                    const bossKey = Object.keys(bossFruitMap).find(k => bossFruitMap[k] === this.islandType);
+                    if (bossKey) {
+                        const bf = new DroppedItem(this.x + (Math.random()-0.5)*40, this.y + (Math.random()-0.5)*40, 'fruit', bossKey);
+                        droppedItems.push(bf);
+                    }
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Boss glow effect (keep)
+                ctx.shadowColor = '#ff0000';
+                ctx.shadowBlur = 20;
+
+                PirateArt.drawEnemy(ctx, this, 'boss');
+                ctx.shadowBlur = 0;
+
+                // Health bar (larger for boss)
+                const barWidth = 50;
+                const barHeight = 6;
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(-barWidth/2, -this.radius * 2.45, barWidth, barHeight);
+                ctx.fillStyle = '#ff0000';
+                ctx.fillRect(-barWidth/2, -this.radius * 2.45, barWidth * (this.hp / this.maxHp), barHeight);
+
+                ctx.restore();
+            }
+        }
+
+        // Projectile class
+        class Projectile {
+            // owner (optional) is an entity that fired the projectile; collisions with owner are ignored
+            constructor(x, y, angle, speed, damage, color, type, owner = null) {
+                this.x = x;
+                this.y = y;
+                this.angle = angle;
+                this.speed = speed;
+                this.damage = damage;
+                this.color = color;
+                this.type = type;
+                this.owner = owner?._fruitOwner || owner || null;
+                this.life = 180; // 3 seconds at 60fps
+                this.radius = type === 'dragon' ? 12 : 8;
+            }
+
+            update() {
+                // homing logic for prismTarget
+                if (this.type === 'prismTarget' && this.target && enemies.includes(this.target)) {
+                    // steer towards target smoothly
+                    const desired = Math.atan2(this.target.y - this.y, this.target.x - this.x);
+                    // shortest angle lerp
+                    let diff = desired - this.angle;
+                    while (diff > Math.PI) diff -= Math.PI * 2;
+                    while (diff < -Math.PI) diff += Math.PI * 2;
+                    this.angle += diff * 0.25; // steering speed
+                }
+
+                // Mecha missile behaviour: auto-aim, retarget, and powerful hit with knockback
+                if (this.type === 'mechaMissile') {
+                    // attempt to maintain or retarget to a live enemy
+                    if (!this.target || !enemies.includes(this.target)) {
+                        // find nearest enemy if any
+                        let best = null; let bd = Infinity;
+                        enemies.forEach(e => { if (!e || e.dead) return; const d = Math.hypot(e.x - this.x, e.y - this.y); if (d < bd) { bd = d; best = e; } });
+                        if (best) this.target = best;
+                    }
+
+                    if (this.target && enemies.includes(this.target)) {
+                        const desired = Math.atan2(this.target.y - this.y, this.target.x - this.x);
+                        let diff = desired - this.angle; while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
+                        this.angle += diff * 0.45; // fast steering
+                    }
+
+                    // move
+                    this.x += Math.cos(this.angle) * this.speed;
+                    this.y += Math.sin(this.angle) * this.speed;
+
+                    // collision with enemies
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        const enemy = enemies[i]; if (!enemy) continue;
+                        if (this.owner === enemy) continue;
+                        const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                        if (d < (enemy.radius || 12) + (this.radius || 8)) {
+                            try { enemy.takeDamage(computeScaledDamage(this.damage, this.owner)); } catch (e) {}
+
+                            // knockback
+                            const nx = (enemy.x - this.x) / Math.max(0.0001, d);
+                            const ny = (enemy.y - this.y) / Math.max(0.0001, d);
+                            const kb = this.knockback || 220;
+                            enemy.x += nx * kb; enemy.y += ny * kb;
+                            enemy.vx = (enemy.vx || 0) + nx * 14; enemy.vy = (enemy.vy || 0) + ny * 10;
+
+                            // visual & impact
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 20, life: 30, type: 'mechaImpact', color: this.color });
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 18, life: 20, type: 'prismimpact', color: '#ffffee' });
+
+                            // small camera shake
+                            try { camera.shakeTime = Math.max(camera.shakeTime || 0, 8); camera.shakeMag = Math.max(camera.shakeMag || 0, 8); } catch (e) {}
+
+                            // chain visual from last hit if owned by a barrage
+                            if (this.barrageOwner && this.barrageOwner.lastHitPos) {
+                                const p0 = this.barrageOwner.lastHitPos;
+                                effects.push({ type: 'swordChain', sx: p0.x, sy: p0.y, ex: enemy.x, ey: enemy.y, life: 20, color: this.color });
+                            }
+                            if (this.barrageOwner) this.barrageOwner.lastHitPos = { x: enemy.x, y: enemy.y };
+
+                            // spawn small explosion particles
+                            for (let s = 0; s < 6; s++) effects.push({ x: enemy.x + (Math.random()-0.5)*18, y: enemy.y + (Math.random()-0.5)*18, radius: 4 + Math.random()*4, life: 30, type: 'powerParticle', color: this.color });
+
+                            // remove missile
+                            const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1);
+                            return;
+                        }
+                    }
+
+                    // remove if out of bounds
+                    if (this.x < -300 || this.x > GAME_WIDTH + 300 || this.y < -300 || this.y > GAME_HEIGHT + 300) {
+                        const idx2 = projectiles.indexOf(this); if (idx2 > -1) projectiles.splice(idx2, 1);
+                    }
+
+                    return; // handled
+                }
+
+                // CARD projectile behavior removed
+
+                // Magma Fist projectile: large dark magma punch that drips lava and explodes on contact applying heavy burn
+                if (this.type === 'magmaFist') {
+                    this.x += Math.cos(this.angle) * (this.speed || 10);
+                    this.y += Math.sin(this.angle) * (this.speed || 10);
+                    if (Math.random() < 0.6) effects.push({ x: this.x + (Math.random()-0.5)*6, y: this.y + (Math.random()-0.5)*6, radius: 3 + Math.random()*4, life: 22, type: 'firetrail', color: '#ff4a22' });
+
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        const enemy = enemies[i]; if (!enemy) continue;
+                        if (this.owner === enemy) continue;
+                        const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                        if (d < (enemy.radius || 12) + (this.radius || 16)) {
+                            try { enemy.takeDamage(computeScaledDamage(this.damage || Math.floor(FRUITS.VOLCANO.damage * 1.1), this.owner)); } catch (e) {}
+                            enemy.burning = Math.max(enemy.burning || 0, 280);
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 48, life: 40, type: 'magmaExplosion', color: '#ff6b33' });
+                            for (let s = 0; s < 10; s++) effects.push({ x: enemy.x + (Math.random()-0.5)*28, y: enemy.y + (Math.random()-0.5)*28, radius: 4 + Math.random()*8, life: 36, type: 'magmaShard', color: '#cc3311' });
+                            try { camera.shakeTime = Math.max(camera.shakeTime || 0, 10); camera.shakeMag = Math.max(camera.shakeMag || 0, 10); } catch (e) {}
+                            const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1);
+                            return;
+                        }
+                    }
+
+                    this.life--;
+                    if (this.life <= 0 || this.x < -300 || this.x > GAME_WIDTH + 300 || this.y < -300 || this.y > GAME_HEIGHT + 300) { const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1); }
+                    return;
+                }
+
+                // Magma Hound: homing zig-zag projectile that dashes into targets
+                if (this.type === 'magmaHound') {
+                    if (!this.target || !enemies.includes(this.target)) {
+                        let best = null; let bd = Infinity;
+                        enemies.forEach(e => { if (!e || e.dead) return; const d = Math.hypot(e.x - this.x, e.y - this.y); if (d < bd) { bd = d; best = e; } });
+                        if (best) this.target = best;
+                    }
+
+                    const t = (this._tick || 0);
+                    const zig = Math.sin(t * 0.35 + (this._seed || 0)) * 0.22;
+                    this._tick = t + 1;
+
+                    if (this.target && enemies.includes(this.target)) {
+                        const desired = Math.atan2(this.target.y - this.y, this.target.x - this.x) + zig;
+                        let diff = desired - this.angle; while (diff > Math.PI) diff -= Math.PI*2; while (diff < -Math.PI) diff += Math.PI*2;
+                        this.angle += diff * 0.16;
+                    } else {
+                        this.angle += zig * 0.06;
+                    }
+
+                    this.x += Math.cos(this.angle) * (this.speed || 6);
+                    this.y += Math.sin(this.angle) * (this.speed || 6);
+
+                    if (Math.random() < 0.5) effects.push({ x: this.x + (Math.random()-0.5)*6, y: this.y + (Math.random()-0.5)*6, radius: 2 + Math.random()*3, life: 20, type: 'firetrail', color: '#ff5522' });
+
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        const enemy = enemies[i]; if (!enemy) continue;
+                        if (this.owner === enemy) continue;
+                        const d = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                        if (d < (enemy.radius || 12) + (this.radius || 10)) {
+                            try { enemy.takeDamage(computeScaledDamage(this.damage || Math.floor(FRUITS.VOLCANO.damage * 0.45), this.owner)); } catch (e) {}
+                            enemy.burning = Math.max(enemy.burning || 0, 200);
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 22, life: 28, type: 'impact', color: '#ff6b33' });
+                            const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1);
+                            return;
+                        }
+                    }
+
+                    this.life--;
+                    if (this.life <= 0) { const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1); }
+                    return;
+                }
+
+                // Rose orbit special behaviour: orbit around owner, damage enemies on contact, reflect enemy projectiles
+                if (this.type === 'roseOrbit') {
+                    // if owner exists and is in world, follow owner's current position (orbit)
+                    const owner = this.orbitOwner || this.owner || player;
+                    if (owner) {
+                        // update orbital angle
+                        this.orbitAngle = (this.orbitAngle || 0) + (this.angularSpeed || 0.18);
+                        const ox = owner.x + Math.cos(owner.angle) * 0; // orbit centered on player center
+                        const oy = owner.y + Math.sin(owner.angle) * 0;
+                        this.x = ox + Math.cos(this.orbitAngle) * (this.orbitRadius || 48);
+                        this.y = oy + Math.sin(this.orbitAngle) * (this.orbitRadius || 48);
+                    } else {
+                        // decay in place if no owner
+                        this.orbitAngle = (this.orbitAngle || 0) + (this.angularSpeed || 0.18);
+                        this.x += Math.cos(this.orbitAngle) * 0.4; this.y += Math.sin(this.orbitAngle) * 0.4;
+                    }
+
+                    // reflect nearby enemy projectiles: search projectiles list
+                    for (let i = projectiles.length - 1; i >= 0; i--) {
+                        const p = projectiles[i];
+                        if (!p || p === this) continue;
+                        // only reflect incoming projectiles not owned by us and that have an owner (enemy)
+                        if (p.owner && p.owner !== this.owner) {
+                            const dd = Math.hypot(p.x - this.x, p.y - this.y);
+                            if (dd < (p.radius || 6) + (this.radius || 12)) {
+                                // reflect: set angle away from rose and transfer ownership to player
+                                const newAngle = Math.atan2(p.y - this.y, p.x - this.x);
+                                p.angle = newAngle;
+                                p.owner = this.owner; // now belongs to player
+                                // boost speed slightly to emphasize reflection
+                                p.speed = (p.speed || 5) + 1.8;
+                                // visual ping and small damage to enemy if it's close
+                                effects.push({ x: p.x, y: p.y, radius: 8, life: 20, type: 'impact', color: '#ff99bb' });
+                            }
+                        }
+                    }
+
+                        // damage enemies on contact with small per-enemy cooldown to avoid spamming
+                        this._hit = this._hit || new Map();
+                        enemies.forEach(enemy => {
+                            const dd = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                            if (dd < (enemy.radius || 12) + (this.radius || 12)) {
+                                const last = this._hit.get(enemy) || 0;
+                                if (last <= 0) {
+                                    try { enemy.takeDamage(computeScaledDamage(this.damage, this.owner)); } catch (e) {}
+                                    // small thorn impact visual
+                                    effects.push({ x: enemy.x, y: enemy.y, radius: 10, life: 22, type: 'impact', color: '#ff99bb' });
+                                    this._hit.set(enemy, 12); // cooldown frames
+                                }
+                            } else {
+                                if (this._hit.has(enemy)) {
+                                    const v = this._hit.get(enemy);
+                                    if (v <= 0) this._hit.delete(enemy); else this._hit.set(enemy, v-1);
+                                }
+                            }
+                        });
+
+                        // life ticks and destroy
+                        this.life--;
+                        if (this.life <= 0) this.destroy();
+                        return;
+                }
+
+                // Special meteor behaviour: heavy falling projectile that impacts with AoE
+                if (this.type === 'meteor') {
+                    // accelerate downward to feel heavy
+                    this.speed = (this.speed || 6) + (this.accel || 0.8);
+
+                    // horizontal drift (precomputed horzSpeed gives smooth arc)
+                    if (this.horzSpeed) this.x += this.horzSpeed;
+                    else this.x += Math.cos(this.angle) * 0.6;
+
+                    this.y += this.speed;
+                    this.life--;
+
+                    // spawn trailing embers/particles for visual flair
+                    if (Math.random() < 0.7) {
+                        effects.push({ x: this.x + (Math.random()-0.5)*8, y: this.y + (Math.random()-0.5)*8, radius: 3 + Math.random()*3, life: 18, type: 'firetrail', color: '#ffb277' });
+                    }
+
+                    // Impact when reaching target Y or ground
+                    if (this.targetY !== undefined && this.y >= this.targetY) {
+                        const ix = this.x;
+                        const iy = this.targetY;
+                        const impactRadius = this.impactRadius || 120;
+
+                        // Big impact effect
+                        effects.push({ x: ix, y: iy, radius: impactRadius, life: 48, type: 'meteorImpact', color: this.color });
+
+                        // Damage and knockup to enemies in radius (scaled by caster level)
+                        enemies.forEach(enemy => {
+                            const d = Math.hypot(enemy.x - ix, enemy.y - iy);
+                            if (d < impactRadius) {
+                                enemy.takeDamage(computeScaledDamage(this.damage, this.owner));
+                                // knockup: instant positional push and small upward velocity if supported
+                                enemy.y -= (this.knockup || 36);
+                                enemy.vy = (enemy.vy || 0) - ((this.knockup || 36) / 6);
+                            }
+                        });
+
+                        // Damage player only if meteor was NOT spawned by the player
+                        try {
+                            if (this.owner !== player && Math.hypot(player.x - ix, player.y - iy) < impactRadius) {
+                                player.takeDamage(this.damage);
+                                player.y -= (this.knockup || 36);
+                                player.invulnerable = 10;
+                            }
+                        } catch (e) {}
+
+                        // Spawn debris shards outward (small projectiles)
+                        for (let k = 0; k < 10; k++) {
+                            const a = (k / 10) * Math.PI * 2 + (Math.random() - 0.5) * 0.6;
+                            const shardBase = Math.max(6, Math.floor(this.damage * 0.45));
+                            const shard = new Projectile(ix + Math.cos(a) * 18, iy + Math.sin(a) * 18, a, 6 + Math.random() * 6, computeScaledDamage(shardBase, this.owner), '#cc6633', 'shard', this.owner);
+                            shard.life = 60;
+                            shard.radius = 6;
+                            projectiles.push(shard);
+                        }
+
+                        // Create ground-smoke/flash particles
+                        for (let s = 0; s < 14; s++) {
+                            effects.push({ x: ix + (Math.random() - 0.5) * impactRadius * 0.8, y: iy + (Math.random() - 0.2) * impactRadius * 0.4, radius: 4 + Math.random() * 8, life: 30 + Math.random() * 30, type: 'smoke', color: '#553322' });
+                        }
+
+                        // remove this meteor
+                        const idx = projectiles.indexOf(this);
+                        if (idx > -1) projectiles.splice(idx, 1);
+                        return; // finished
+                    }
+
+                    // remove if goes out of bounds
+                    if (this.life <= 0 || this.x < -200 || this.x > GAME_WIDTH + 200 || this.y > GAME_HEIGHT + 200) {
+                        const idx2 = projectiles.indexOf(this); if (idx2 > -1) projectiles.splice(idx2, 1);
+                    }
+
+                    return; // skip default movement logic
+                }
+
+                // Sword Deity behaviour: orbiting -> seek/dash -> chain
+                if (this.type === 'swordDeity') {
+                    const owner = this.orbitOwner || this.owner || player;
+                    // Orbiting state: follow owner in a ring and periodically search for targets
+                    if (this.state === 'orbit') {
+                        this.orbitAngle = (this.orbitAngle || 0) + (this.angularSpeed || 0.14);
+                        const orR = this.orbitRadius || 120;
+                        if (owner) {
+                            this.x = owner.x + Math.cos(this.orbitAngle) * orR;
+                            this.y = owner.y + Math.sin(this.orbitAngle) * orR;
+                        } else {
+                            // drift slowly if owner missing
+                            this.x += Math.cos(this.orbitAngle) * 0.6;
+                            this.y += Math.sin(this.orbitAngle) * 0.6;
+                        }
+
+                        this._seekTimer = (this._seekTimer || 6) - 1;
+                        if (this._seekTimer <= 0) {
+                            this._seekTimer = 8;
+                            // find nearest valid enemy (not the last hit) within range
+                            let best = null; let bd = 1e9;
+                            enemies.forEach(e => {
+                                if (!e) return;
+                                if (e === owner) return;
+                                if (e.dead) return;
+                                if (this._lastHit === e) return;
+                                const d = Math.hypot(e.x - this.x, e.y - this.y);
+                                if (d < bd && d < 420) { bd = d; best = e; }
+                            });
+                            if (best) {
+                                this.state = 'dash';
+                                this.target = best;
+                                this.dashSpeed = 16 + Math.random() * 4;
+                                this.angle = Math.atan2(best.y - this.y, best.x - this.x);
+                            }
+                        }
+
+                        // life tick and cleanup
+                        this.life--;
+                        if (this.life <= 0) this.destroy();
+                        return;
+                    }
+
+                    // Dashing / chaining state: fly towards target, hit and chain
+                    if (this.state === 'dash') {
+                        const sp = this.dashSpeed || 16;
+                        this.x += Math.cos(this.angle) * sp;
+                        this.y += Math.sin(this.angle) * sp;
+
+                        // collision with target
+                        if (this.target && enemies.includes(this.target)) {
+                            const d = Math.hypot(this.target.x - this.x, this.target.y - this.y);
+                            if (d < (this.target.radius || 12) + this.radius) {
+                                try { this.target.takeDamage(computeScaledDamage(this.damage, this.owner)); } catch (e) {}
+                                // visual slash and small knockback
+                                effects.push({ x: this.target.x, y: this.target.y, life: 18, type: 'bladeSlash', radius: 26, color: this.color });
+                                this._lastHit = this.target;
+                                const nx = Math.cos(this.angle), ny = Math.sin(this.angle);
+                                this.target.vx = (this.target.vx || 0) + nx * 6;
+                                this.target.vy = (this.target.vy || 0) + ny * 4;
+
+                                // find next chain target near the one we just hit
+                                let next = null; let nd = 1e9;
+                                enemies.forEach(e => {
+                                    if (!e) return;
+                                    if (e === this._lastHit) return;
+                                    if (e.dead) return;
+                                    const dist = Math.hypot(e.x - this.target.x, e.y - this.target.y);
+                                    if (dist < nd && dist < 320) { nd = dist; next = e; }
+                                });
+
+                                if (next) {
+                                    // chain visual from last hit to next
+                                    effects.push({ type: 'swordChain', sx: this.target.x, sy: this.target.y, ex: next.x, ey: next.y, life: 18, color: this.color });
+                                    // retarget and continue dashing
+                                    this.target = next;
+                                    this.angle = Math.atan2(next.y - this.y, next.x - this.x);
+                                    this.dashSpeed = 16 + Math.random() * 4;
+                                } else {
+                                    // no next target: return to orbit
+                                    this.state = 'orbit';
+                                    if (owner) this.orbitAngle = Math.atan2(this.y - owner.y, this.x - owner.x);
+                                    this._seekTimer = 12;
+                                }
+                            }
+                        } else {
+                            // target lost or died -> return to orbit
+                            if (!this.target || (this.target && (this.target.dead || !enemies.includes(this.target)))) {
+                                this.state = 'orbit';
+                                this._seekTimer = 12;
+                            }
+                        }
+
+                        this.life--;
+                        if (this.life <= 0) this.destroy();
+                        return; // skip default movement
+                    }
+                }
+
+                this.x += Math.cos(this.angle) * this.speed;
+                this.y += Math.sin(this.angle) * this.speed;
+                this.life--;
+
+                // special handling for prism beams: track distance and split into shards at maxDistance
+                if (this.type === 'prismbeam') {
+                    this.distance = (this.distance || 0) + this.speed;
+                    if (this.distance >= (this.maxDistance || 420)) {
+                        // spawn colorful shards
+                        for (let i = 0; i < 8; i++) {
+                            const a = (i / 8) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+                            const shard = new Projectile(this.x, this.y, a, 6 + Math.random() * 4, Math.max(6, Math.floor(this.damage * 0.6)), ['#ff6b6b','#ffd166','#6bf178','#66ddff','#c08cff'][i%5], 'prismShard');
+                            shard.owner = this.owner || null;
+                            shard.life = 80;
+                            shard.radius = 6;
+                            projectiles.push(shard);
+                        }
+                        this.destroy();
+                        return;
+                    }
+                }
+
+                // Dragon Beam travel: spawn trail and check for reaching target point
+                if (this.type === 'dragonBeam') {
+                    if (Math.random() < 0.7) effects.push({ x: this.x + (Math.random()-0.5)*6, y: this.y + (Math.random()-0.5)*6, radius: 3 + Math.random()*6, life: 22, type: 'firetrail', color: '#ff9966' });
+                    // if target coords set and we're close, explode
+                    if (typeof this.targetX === 'number' && typeof this.targetY === 'number') {
+                        const dd = Math.hypot(this.x - this.targetX, this.y - this.targetY);
+                        if (dd < 18) {
+                            const ix = this.x, iy = this.y, impactRadius = this.impactRadius || 140;
+                            effects.push({ x: ix, y: iy, radius: impactRadius, life: 48, type: 'meteorImpact', color: '#ff3344' });
+                            enemies.forEach(e2 => { if (!e2) return; const d2 = Math.hypot(e2.x - ix, e2.y - iy); if (d2 < impactRadius) { try { e2.takeDamage(computeScaledDamage(this.damage, this.owner)); } catch(e){} e2.burning = Math.max(e2.burning || 0, 240); } });
+                            try { if (this.owner !== player && Math.hypot(player.x - ix, player.y - iy) < impactRadius) { player.takeDamage(this.damage); player.invulnerable = 10; } } catch (e) {}
+                            const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1);
+                            return; // finished
+                        }
+                    }
+                }
+
+                // Check collision with enemies (ignore owner's collisions)
+                enemies.forEach(enemy => {
+                    if (this.owner && (this.owner === enemy)) return; // ignore hitting owner
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+
+                    if (this.type === 'loveArrow') {
+                        // love arrows chain: on hit, damage and retarget to next bound/nearby enemy
+                        if (!this._hitTargets) this._hitTargets = new Set();
+                        if (this._hitTargets.has(enemy)) return;
+                        if (dist < this.radius + enemy.radius) {
+                            try { enemy.takeDamage(computeScaledDamage(this.damage, this.owner)); } catch (e) {}
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 18, life: 22, type: 'prismimpact', color: '#ff4466' });
+                            this._hitTargets.add(enemy);
+                            this.chainLeft = Math.max(0, (this.chainLeft || 0) - 1);
+
+                            // find next target: prefer from bound list then nearest not-yet-hit
+                            let next = null;
+                            if (this._boundList && this._boundList.length) {
+                                for (let i = 0; i < this._boundList.length; i++) {
+                                    const cand = this._boundList[i];
+                                    if (!cand || cand.dead) continue;
+                                    if (!this._hitTargets.has(cand) && cand !== enemy) { next = cand; break; }
+                                }
+                            }
+                            if (!next) {
+                                // fallback: nearest enemy to current hit that hasn't been hit yet
+                                let best = null; let bd = Infinity;
+                                enemies.forEach(e => {
+                                    if (!e || e.dead) return;
+                                    if (this._hitTargets.has(e)) return;
+                                    if (e === enemy) return;
+                                    const d2 = Math.hypot(e.x - enemy.x, e.y - enemy.y);
+                                    if (d2 < bd && d2 < 420) { bd = d2; best = e; }
+                                });
+                                next = best;
+                            }
+
+                            if (next && this.chainLeft > 0) {
+                                // retarget and continue flying
+                                this.target = next;
+                                this.angle = Math.atan2(next.y - this.y, next.x - this.x);
+                                this.speed = Math.max(this.speed, 10);
+                                // small ping effect
+                                effects.push({ x: this.x, y: this.y, radius: 8, life: 12, type: 'powerParticle', color: '#ff88aa' });
+                                return; // continue existing projectile (do not destroy)
+                            }
+
+                            // no next target: destroy projectile after hit
+                            this.destroy();
+                        }
+                        return;
+                    }
+
+                    if (dist < this.radius + enemy.radius) {
+                        enemy.takeDamage(computeScaledDamage(this.damage, this.owner));
+                        
+                        // Special effects based on type
+                        if (this.type === 'ice') {
+                            enemy.frozen = 120; // 2 seconds
+                        } else if (this.type === 'lightning') {
+                            enemy.stunned = 60; // 1 second
+                        } else if (this.type === 'dragon' || this.burn) {
+                            // Apply burn over time
+                            enemy.burning = enemy.burning || 0;
+                            enemy.burning += 180; // 3 seconds
+                        }
+                        
+                        // spawn a vivid prism impact effect
+                        effects.push({ type: 'prismimpact', x: this.x, y: this.y, life: 20, color: this.color, radius: 20 });
+                        this.destroy();
+                    }
+                });
+
+                // Arena: allow projectile to hit AI when active (and ignore owner's own shots)
+                try {
+                    if (typeof ArenaManager !== 'undefined' && ArenaManager.active && ArenaManager.ai) {
+                        const ai = ArenaManager.ai;
+                        if (this.owner !== ai) {
+                            const dAi = Math.hypot(ai.x - this.x, ai.y - this.y);
+                            if (dAi < this.radius + (ai.radius || 18)) {
+                                    try {
+                                        console.log('[Arena] projectile hit AI dmg=', computeScaledDamage(this.damage, this.owner), 'owner=', (this.owner && this.owner.isAI) ? 'AI' : (this.owner && this.owner === player) ? 'Player' : 'Unknown');
+                                    } catch(e) {}
+                                    ai.takeDamage(computeScaledDamage(this.damage, this.owner));
+                                    effects.push({ x: ai.x, y: ai.y, radius: 12, life: 18, type: 'impact' });
+                                this.destroy();
+                                return;
+                            }
+                        }
+                    }
+                } catch (e) { console.error('Arena projectile->AI error', e); }
+
+                // Generic: allow enemy/projectile to hit player if owner is not player
+                try {
+                    if (this.owner !== player) {
+                        const dPlayer = Math.hypot(player.x - this.x, player.y - this.y);
+                        if (dPlayer < this.radius + (player.radius || 18)) {
+                            player.takeDamage(computeScaledDamage(this.damage, this.owner));
+                            effects.push({ x: player.x, y: player.y, radius: 12, life: 18, type: 'impact' });
+                            this.destroy();
+                            return;
+                        }
+                    }
+                } catch (e) { /* ignore if player missing */ }
+
+                // Remove if out of bounds or life expired
+                if (this.life <= 0 || this.x < 0 || this.x > GAME_WIDTH || 
+                    this.y < 0 || this.y > GAME_HEIGHT) {
+                    this.destroy();
+                }
+            }
+
+            destroy() {
+                // Impact effect
+                const impactEffect = {
+                    x: this.x,
+                    y: this.y,
+                    radius: this.radius * 1.5,
+                    life: 15,
+                    type: 'impact',
+                    color: this.color
+                };
+                effects.push(impactEffect);
+                
+                const index = projectiles.indexOf(this);
+                if (index > -1) {
+                    projectiles.splice(index, 1);
+                }
+            }
+
+            draw() {
+                ctx.save();
+                if (this.type === 'prismTarget') {
+                    // bright core
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = 22;
+                    ctx.globalAlpha = 1;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius * 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // outer glow
+                    ctx.globalAlpha = 0.6;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius * 2.6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // streak behind
+                    ctx.globalAlpha = 0.35;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - Math.cos(this.angle) * 6, this.y - Math.sin(this.angle) * 6);
+                    ctx.lineTo(this.x - Math.cos(this.angle) * 30, this.y - Math.sin(this.angle) * 30);
+                    ctx.lineWidth = this.radius * 1.6;
+                    ctx.strokeStyle = this.color;
+                    ctx.stroke();
+                } else if (this.type === 'mechaMissile') {
+                    // sleek missile with glowing trail
+                    ctx.save();
+                    // core
+                    ctx.fillStyle = this.color || '#99aaff';
+                    ctx.shadowColor = this.color || '#99aaff';
+                    ctx.shadowBlur = 18;
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, this.y, this.radius || 8, (this.radius || 8) * 0.8, this.angle, 0, Math.PI * 2);
+                    ctx.fill();
+                    // exhaust trail
+                    ctx.globalAlpha = 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - Math.cos(this.angle) * 6, this.y - Math.sin(this.angle) * 6);
+                    ctx.lineTo(this.x - Math.cos(this.angle) * 30, this.y - Math.sin(this.angle) * 30);
+                    ctx.lineWidth = Math.max(2, (this.radius || 8) * 0.8);
+                    ctx.strokeStyle = 'rgba(255,220,180,0.85)';
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (this.type === 'meteor') {
+                    // Fiery meteor core
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = '#ffbb88';
+                    ctx.shadowBlur = 30;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius * 1.1, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Bright trail (stretched)
+                    ctx.globalAlpha = 0.9;
+                    ctx.beginPath();
+                    ctx.moveTo(this.x - Math.cos(this.angle) * 6, this.y - Math.sin(this.angle) * 6);
+                    ctx.lineTo(this.x - Math.cos(this.angle) * 80, this.y - Math.sin(this.angle) * 80);
+                    ctx.lineWidth = this.radius * 1.8;
+                    ctx.strokeStyle = 'rgba(255,180,120,0.9)';
+                    ctx.stroke();
+
+                    // Ember sparks
+                    ctx.globalAlpha = 0.7;
+                    for (let i = 0; i < 6; i++) {
+                        ctx.beginPath();
+                        const ox = this.x - Math.cos(this.angle) * (20 + i * 8) + (Math.random() - 0.5) * 8;
+                        const oy = this.y - Math.sin(this.angle) * (20 + i * 8) + (Math.random() - 0.5) * 8;
+                        ctx.fillStyle = i % 2 ? '#ffdd99' : '#ff7744';
+                        ctx.arc(ox, oy, 2 + Math.random() * 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // soft shadow on ground (suggested impact location)
+                    ctx.globalAlpha = 0.18;
+                    ctx.fillStyle = '#000000';
+                    ctx.beginPath();
+                    ctx.ellipse(this.x, Math.min(this.y + 28, GAME_HEIGHT - 10), this.radius * 1.3, this.radius * 0.6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                } else {
+                    if (this.type === 'roseOrbit') {
+                        // draw a stylized red rose (petals) for the orbiting thorn
+                        ctx.translate(this.x, this.y);
+                        const rot = this.orbitAngle || this.angle || 0;
+                        ctx.rotate(rot + (Date.now()/900));
+                        // shadow and glow
+                        ctx.shadowColor = 'rgba(255,120,150,0.9)'; ctx.shadowBlur = 18;
+                        // draw petals (8 small arcs)
+                        for (let p = 0; p < 6; p++) {
+                            const pa = (p / 6) * Math.PI * 2;
+                            ctx.fillStyle = p % 2 ? '#ff4466' : '#ff6688';
+                            ctx.beginPath();
+                            ctx.ellipse(Math.cos(pa) * 4, Math.sin(pa) * 4, this.radius * 0.5, this.radius * 0.9, pa, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        // center core
+                        ctx.fillStyle = '#aa0011'; ctx.beginPath(); ctx.arc(0,0,this.radius*0.42,0,Math.PI*2); ctx.fill();
+                        // small thorn spike
+                        ctx.fillStyle = '#663333'; ctx.beginPath(); ctx.moveTo(this.radius*0.5,0); ctx.lineTo(this.radius*1.4, -3); ctx.lineTo(this.radius*1.4, 3); ctx.fill();
+                        ctx.rotate(-rot - (Date.now()/900));
+                        ctx.translate(-this.x, -this.y);
+                        ctx.restore();
+                        return;
+                    }
+
+                    // Love Arrow: draw as a heart icon emoji
+                    if (this.type === 'loveArrow') {
+                        ctx.save();
+                        const size = Math.max(12, Math.floor((this.radius || 8) * 2));
+                        ctx.font = `${size}px serif`;
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.shadowColor = this.color || '#ff4466'; ctx.shadowBlur = 16;
+                        ctx.fillStyle = this.color || '#ff4466';
+                        ctx.fillText('❤️', this.x, this.y);
+                        ctx.restore();
+                        return;
+                    }
+                    ctx.fillStyle = this.color;
+                    ctx.shadowColor = this.color;
+                    ctx.shadowBlur = 10;
+                    
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Trail effect
+                    ctx.globalAlpha = 0.5;
+                    ctx.beginPath();
+                    ctx.arc(
+                        this.x - Math.cos(this.angle) * 15, 
+                        this.y - Math.sin(this.angle) * 15, 
+                        this.radius * 0.7, 
+                        0, Math.PI * 2
+                    );
+                    ctx.fill();
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        // Ice Projectile class
+        class IceProjectile extends Projectile {
+            constructor(x, y, angle, speed, damage, color) {
+                super(x, y, angle, speed, damage, color, 'ice');
+                this.trailPoints = [];
+                this.crystalRotation = 0;
+            }
+
+            update() {
+                // Add current position to trail
+                this.trailPoints.push({ x: this.x, y: this.y, life: 20 });
+                if (this.trailPoints.length > 8) {
+                    this.trailPoints.shift();
+                }
+                
+                // Update trail points
+                this.trailPoints.forEach(point => point.life--);
+                this.trailPoints = this.trailPoints.filter(point => point.life > 0);
+                
+                this.crystalRotation += 0.3;
+                
+                // Call parent update
+                super.update();
+            }
+
+            destroy() {
+                // Create ice explosion
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    const iceShardEffect = {
+                        x: this.x,
+                        y: this.y,
+                        vx: Math.cos(angle) * 3,
+                        vy: Math.sin(angle) * 3,
+                        radius: 6,
+                        life: 25,
+                        type: 'iceshard'
+                    };
+                    effects.push(iceShardEffect);
+                }
+                
+                // Freeze nearby enemies (duration configurable per projectile)
+                enemies.forEach(enemy => {
+                    const dist = Math.sqrt(Math.pow(enemy.x - this.x, 2) + Math.pow(enemy.y - this.y, 2));
+                    if (dist < 60) {
+                        enemy.frozen = this.freezeDuration || 60; // default ~1 second
+                        const freezeEffect = {
+                            x: enemy.x,
+                            y: enemy.y,
+                            radius: 30,
+                            life: 40,
+                            type: 'freeze'
+                        };
+                        effects.push(freezeEffect);
+                    }
+                });
+                
+                const index = projectiles.indexOf(this);
+                if (index > -1) {
+                    projectiles.splice(index, 1);
+                }
+            }
+
+            draw() {
+                ctx.save();
+                
+                // Draw trail
+                this.trailPoints.forEach((point, index) => {
+                    ctx.fillStyle = `rgba(68, 221, 255, ${point.life / 20 * 0.6})`;
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 4 + index, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                
+                // Draw main ice crystal
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.crystalRotation);
+                
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 15;
+                
+                // Crystal shape
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i / 6) * Math.PI * 2;
+                    const radius = i % 2 === 0 ? this.radius : this.radius * 0.6;
+                    const x = Math.cos(angle) * radius;
+                    const y = Math.sin(angle) * radius;
+                    
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                ctx.fill();
+                
+                // Inner glow
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.restore();
+            }
+        }
+
+        // Ice Bird (ultimate) Projectile class
+        class IceBirdProjectile extends Projectile {
+            constructor(x, y, angle, speed, damage, color, owner = null) {
+                super(x, y, angle, speed, damage, color, 'iceBird', owner);
+                this.trailPoints = [];
+                this.flap = 0;
+                this.knockback = 280;
+                this.impactRadius = 48;
+            }
+
+            update() {
+                this.flap += 0.12;
+                // long straight travel
+                this.x += Math.cos(this.angle) * this.speed;
+                this.y += Math.sin(this.angle) * this.speed;
+
+                // leave chunky ice particle trail
+                if (Math.random() < 0.6) effects.push({ x: this.x + (Math.random()-0.5)*8, y: this.y + (Math.random()-0.5)*8, radius: 6 + Math.random()*8, life: 40, type: 'iceChunk', color: '#e8fbff' });
+
+                // collide with enemies
+                for (let i = enemies.length - 1; i >= 0; i--) {
+                    const en = enemies[i]; if (!en) continue;
+                    if (this.owner === en) continue;
+                    const d = Math.hypot(en.x - this.x, en.y - this.y);
+                    if (d < (en.radius || 12) + this.impactRadius) {
+                        try { en.takeDamage(computeScaledDamage(this.damage, this.owner)); } catch (e) {}
+                        en.frozen = Math.max(en.frozen || 0, 120);
+                        en.slow = Math.max(en.slow || 0, 180);
+                        // knockback from bird
+                        const nx = (en.x - this.x) / Math.max(0.001, d);
+                        const ny = (en.y - this.y) / Math.max(0.001, d);
+                        en.x += nx * this.knockback; en.y += ny * this.knockback;
+                        effects.push({ x: en.x, y: en.y, radius: 48, life: 40, type: 'iceExplosion', color: '#dff6ff' });
+                    }
+                }
+
+                // remove if out of bounds or life expired
+                this.life--;
+                if (this.life <= 0 || this.x < -400 || this.x > GAME_WIDTH + 400 || this.y < -400 || this.y > GAME_HEIGHT + 400) {
+                    const idx = projectiles.indexOf(this); if (idx > -1) projectiles.splice(idx, 1);
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                // bird silhouette body
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = '#bff6ff'; ctx.shadowBlur = 32;
+                ctx.beginPath(); ctx.ellipse(0, 0, this.radius * 1.5, this.radius, 0, 0, Math.PI*2); ctx.fill();
+                // wings
+                const wf = Math.sin(this.flap) * 12;
+                ctx.fillStyle = '#e6fbff'; ctx.beginPath(); ctx.ellipse(-20, -wf, this.radius * 1.6, this.radius * 0.6, -0.6, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.ellipse(-20, wf, this.radius * 1.6, this.radius * 0.6, 0.6, 0, Math.PI*2); ctx.fill();
+                // beak/crest
+                ctx.fillStyle = '#bfefff'; ctx.beginPath(); ctx.moveTo(this.radius*1.1, 0); ctx.lineTo(this.radius*1.8, -6); ctx.lineTo(this.radius*1.8, 6); ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Phoenix Projectile class
+        class PhoenixProjectile extends Projectile {
+            constructor(x, y, angle, speed, damage, color) {
+                super(x, y, angle, speed, damage, color, 'phoenix');
+                this.wingFlap = 0;
+                this.trailPoints = [];
+                this.hasExploded = false;
+            }
+
+            update() {
+                this.wingFlap += 0.4;
+                
+                // Add trail
+                this.trailPoints.push({ x: this.x, y: this.y, life: 15 });
+                if (this.trailPoints.length > 6) {
+                    this.trailPoints.shift();
+                }
+                
+                this.trailPoints.forEach(point => point.life--);
+                this.trailPoints = this.trailPoints.filter(point => point.life > 0);
+                
+                super.update();
+            }
+
+            destroy() {
+                if (this.hasExploded) return;
+                this.hasExploded = true;
+                
+                // Phoenix explosion
+                for (let i = 0; i < 12; i++) {
+                    const angle = (i / 12) * Math.PI * 2;
+                    const fireEffect = {
+                        x: this.x,
+                        y: this.y,
+                        vx: Math.cos(angle) * 4,
+                        vy: Math.sin(angle) * 4,
+                        radius: 10,
+                        life: 40,
+                        color: FRUITS.PHOENIX.color,
+                        type: 'bluephoenixfire'
+                    };
+                    effects.push(fireEffect);
+                }
+                
+                // Damage enemies in explosion
+                enemies.forEach(enemy => {
+                    const dist = Math.sqrt(Math.pow(enemy.x - this.x, 2) + Math.pow(enemy.y - this.y, 2));
+                    if (dist < 80) {
+                        enemy.takeDamage(computeScaledDamage(this.damage, this.owner));
+                        
+                        // Apply blue burn (damage over time) specific to phoenix skill
+                        enemy.blueburn = enemy.blueburn || 0;
+                        enemy.blueburn += 180; // 3 seconds
+                        const blueBurnEffect = { x: enemy.x, y: enemy.y, radius: 15, life: 60, type: 'blueburn' };
+                        effects.push(blueBurnEffect);
+                    }
+                });
+                
+                // Phoenix rebirth effect
+                setTimeout(() => {
+                    const rebirthEffect = {
+                        x: this.x,
+                        y: this.y,
+                        radius: 20,
+                        life: 40,
+                        type: 'phoenixrebirth'
+                    };
+                    effects.push(rebirthEffect);
+                }, 500);
+                
+                const index = projectiles.indexOf(this);
+                if (index > -1) {
+                    projectiles.splice(index, 1);
+                }
+            }
+
+            draw() {
+                ctx.save();
+                
+                // Draw trail
+                this.trailPoints.forEach((point, index) => {
+                    ctx.fillStyle = `rgba(255, 107, 53, ${point.life / 15 * 0.7})`;
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 6 + index, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+                
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                // Phoenix body
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.ellipse(0, 0, this.radius, this.radius * 0.7, 0, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Wings
+                const wingOffset = Math.sin(this.wingFlap) * 0.3;
+                ctx.fillStyle = '#ff8c42';
+                ctx.beginPath();
+                ctx.ellipse(-8, -5 + wingOffset, 12, 8, -0.5, 0, Math.PI * 2);
+                ctx.ellipse(-8, 5 - wingOffset, 12, 8, 0.5, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Beak
+                ctx.fillStyle = '#ffaa00';
+                ctx.beginPath();
+                ctx.moveTo(this.radius, 0);
+                ctx.lineTo(this.radius + 8, -3);
+                ctx.lineTo(this.radius + 8, 3);
+                ctx.closePath();
+                ctx.fill();
+                
+                ctx.restore();
+            }
+        }
+
+        // Black Hole Projectile class
+        class BlackHoleProjectile extends Projectile {
+            constructor(x, y, angle, speed, damage, color) {
+                super(x, y, angle, speed, damage, color, 'blackhole');
+                this.radius = 25;
+                this.suctionRadius = 120;
+                this.life = 300; // 5 seconds
+                this.rotation = 0;
+                this.suctionPower = 2;
+            }
+
+            update() {
+                // Move forward slowly
+                this.x += Math.cos(this.angle) * this.speed;
+                this.y += Math.sin(this.angle) * this.speed;
+                this.life--;
+                this.rotation += 0.2;
+
+                // Suction effect on enemies
+                enemies.forEach(enemy => {
+                    const dist = Math.sqrt(Math.pow(enemy.x - this.x, 2) + Math.pow(enemy.y - this.y, 2));
+                    
+                    // Suction range
+                    if (dist < this.suctionRadius && dist > this.radius) {
+                        const suctionAngle = Math.atan2(this.y - enemy.y, this.x - enemy.x);
+                        const suctionForce = this.suctionPower * (1 - dist / this.suctionRadius);
+                        
+                        enemy.x += Math.cos(suctionAngle) * suctionForce;
+                        enemy.y += Math.sin(suctionAngle) * suctionForce;
+                        
+                        // Visual suction effect
+                        if (Math.random() < 0.3) {
+                            const suctionEffect = {
+                                x: enemy.x + (Math.random() - 0.5) * 20,
+                                y: enemy.y + (Math.random() - 0.5) * 20,
+                                targetX: this.x,
+                                targetY: this.y,
+                                life: 20,
+                                type: 'suction'
+                            };
+                            effects.push(suctionEffect);
+                        }
+                    }
+                    
+                    // Direct hit damage
+                    if (dist < this.radius + enemy.radius) {
+                        enemy.takeDamage(computeScaledDamage(this.damage, this.owner));
+                        
+                        // Create absorption effect
+                        const absorbEffect = {
+                            x: enemy.x,
+                            y: enemy.y,
+                            radius: 15,
+                            life: 30,
+                            type: 'absorb'
+                        };
+                        effects.push(absorbEffect);
+                    }
+                });
+
+                // Remove if life expired or out of bounds
+                if (this.life <= 0 || this.x < -50 || this.x > GAME_WIDTH + 50 || 
+                    this.y < -50 || this.y > GAME_HEIGHT + 50) {
+                    this.destroy();
+                }
+            }
+
+            destroy() {
+                // Massive explosion effect
+                for (let i = 0; i < 8; i++) {
+                    const explosionEffect = {
+                        x: this.x + (Math.random() - 0.5) * 80,
+                        y: this.y + (Math.random() - 0.5) * 80,
+                        radius: 20 + Math.random() * 30,
+                        life: 40,
+                        type: 'blackholeexplosion'
+                    };
+                    effects.push(explosionEffect);
+                }
+                
+                const index = projectiles.indexOf(this);
+                if (index > -1) {
+                    projectiles.splice(index, 1);
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                // Outer suction field (barely visible)
+                ctx.fillStyle = 'rgba(26, 0, 51, 0.12)';
+                ctx.beginPath();
+                ctx.arc(0, 0, this.suctionRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Black hole core
+                ctx.fillStyle = this.color || '#6633cc';
+                ctx.shadowColor = '#9966ff';
+                ctx.shadowBlur = 22;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner dark core
+                ctx.fillStyle = '#000000';
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius * 0.6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Swirling effect
+                ctx.strokeStyle = '#9966ff';
+                ctx.lineWidth = 3;
+                ctx.globalAlpha = 0.85;
+                for (let i = 0; i < 4; i++) {
+                    const spiralAngle = (i / 4) * Math.PI * 2 + this.rotation;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.radius * 0.8, spiralAngle, spiralAngle + Math.PI * 0.3);
+                    ctx.stroke();
+                }
+
+                // Outer ring
+                ctx.strokeStyle = '#6633cc';
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.6;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius * 1.2, 0, Math.PI * 2);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+        }
+
+        // Singularity Projectile (stationary on player, larger radius, longer duration)
+        class SingularityProjectile extends Projectile {
+            constructor(player) {
+                super(player.x, player.y, 0, 0, FRUITS.SINGULARITY.damage, FRUITS.SINGULARITY.color, 'singularity', player);
+                this.player = player;
+                this.radius = 34;
+                this.suctionRadius = 200; // wider radius
+                this.life = 60 * 6; // longer duration (~6s)
+                this.rotation = 0;
+                this.suctionPower = 2.2;
+                // Orbit layers: inner rotates clockwise, outer rotates counter-clockwise
+                this._tick = 0;
+                this.orbitLayers = [
+                    { count: 6, orbitRadius: 56, angularSpeed: 0.26, nodeRadius: 10 }, // inner (clockwise)
+                    { count: 8, orbitRadius: 100, angularSpeed: -0.18, nodeRadius: 14 } // outer (counter-clockwise)
+                ];
+                // Precompute nodes for each layer
+                this._nodes = [];
+                this.orbitLayers.forEach((layer, li) => {
+                    for (let i = 0; i < layer.count; i++) {
+                        this._nodes.push({
+                            layer: li,
+                            angle: (i / layer.count) * Math.PI * 2,
+                            x: this.player.x + Math.cos((i / layer.count) * Math.PI * 2) * layer.orbitRadius,
+                            y: this.player.y + Math.sin((i / layer.count) * Math.PI * 2) * layer.orbitRadius,
+                            lastHitTick: new WeakMap() // track per-enemy last hit tick to avoid spam
+                        });
+                    }
+                });
+            }
+
+            update() {
+                // follow player
+                this.x = this.player.x;
+                this.y = this.player.y;
+                this.rotation += 0.18;
+                this._tick++;
+
+                // pull enemies and enemy projectiles
+                enemies.forEach(enemy => {
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (dist < this.suctionRadius && dist > this.radius) {
+                        const angle = Math.atan2(this.y - enemy.y, this.x - enemy.x);
+                        const force = this.suctionPower * (1 - dist / this.suctionRadius);
+                        enemy.x += Math.cos(angle) * force;
+                        enemy.y += Math.sin(angle) * force;
+                        // occasional suction particles
+                        if (Math.random() < 0.25) effects.push({ x: enemy.x + (Math.random()-0.5)*10, y: enemy.y + (Math.random()-0.5)*10, targetX: this.x, targetY: this.y, life: 22, type: 'suction' });
+                    }
+                });
+
+                // pull projectiles and convert them into energy particles when close
+                for (let i = projectiles.length - 1; i >= 0; i--) {
+                    const p = projectiles[i];
+                    if (p === this) continue;
+                    if (p.owner === this.player) continue; // ignore player's own
+                    const d = Math.hypot(p.x - this.x, p.y - this.y);
+                    if (d < this.suctionRadius) {
+                        const ang = Math.atan2(this.y - p.y, this.x - p.x);
+                        p.x += Math.cos(ang) * 4;
+                        p.y += Math.sin(ang) * 4;
+                        if (d < this.radius + 6) {
+                            // spawn energy particles
+                            for (let k=0;k<8;k++) {
+                                const a = (k/8)*Math.PI*2 + Math.random()*0.4;
+                                effects.push({ x: this.x, y: this.y, vx: Math.cos(a)*(3+Math.random()*3), vy: Math.sin(a)*(3+Math.random()*3), radius: 8, life: 30, color: '#a080ff', type: 'energyParticle' });
+                            }
+                            // destroy projectile
+                            if (typeof p.destroy === 'function') p.destroy(); else projectiles.splice(i,1);
+                        }
+                    }
+                }
+                // Update orbiting nodes (damage-on-contact)
+                this._nodes.forEach(node => {
+                    const layer = this.orbitLayers[node.layer];
+                    node.angle += layer.angularSpeed;
+                    node.x = this.x + Math.cos(node.angle) * layer.orbitRadius;
+                    node.y = this.y + Math.sin(node.angle) * layer.orbitRadius;
+
+                    // collision vs enemies
+                    enemies.forEach(enemy => {
+                        if (!enemy || enemy.dead) return;
+                        const d = Math.hypot(enemy.x - node.x, enemy.y - node.y);
+                        if (d < (layer.nodeRadius + (enemy.radius || 12))) {
+                            const last = node.lastHitTick.get(enemy) || -9999;
+                            if (this._tick - last > 10) { // cooldown ~10 frames
+                                node.lastHitTick.set(enemy, this._tick);
+                                try { enemy.takeDamage(computeScaledDamage(this.damage * 0.9, this.owner)); } catch (e) {}
+                                enemy.stunned = Math.max(enemy.stunned || 0, 20);
+                                // small knockback away from node
+                                const ang = Math.atan2(enemy.y - node.y, enemy.x - node.x);
+                                enemy.x += Math.cos(ang) * 18; enemy.y += Math.sin(ang) * 18;
+                                effects.push({ x: enemy.x, y: enemy.y, radius: 18, life: 20, type: 'prismimpact', color: this.color });
+                            }
+                        }
+                    });
+                });
+                this.life--;
+                if (this.life <= 0) this.explode();
+            }
+
+            explode() {
+                // explosion visuals
+                effects.push({ x: this.x, y: this.y, radius: this.suctionRadius * 0.7, life: 48, type: 'blackholeexplosion' });
+                // damage & knockback
+                enemies.forEach(enemy => {
+                    const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
+                    if (dist < this.suctionRadius) {
+                        enemy.takeDamage(computeScaledDamage(this.damage, this.owner));
+                        const ang = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                        enemy.x += Math.cos(ang) * Math.min(160, (this.suctionRadius - dist) * 0.6);
+                        enemy.y += Math.sin(ang) * Math.min(160, (this.suctionRadius - dist) * 0.6);
+                    }
+                });
+
+                // burst energy particles
+                for (let k=0;k<16;k++) {
+                    const a = (k/16)*Math.PI*2 + Math.random()*0.6;
+                    effects.push({ x: this.x, y: this.y, vx: Math.cos(a)*(4+Math.random()*3), vy: Math.sin(a)*(4+Math.random()*3), radius: 10, life: 36, color: '#a080ff', type: 'energyParticle' });
+                }
+
+                const idx = projectiles.indexOf(this);
+                if (idx > -1) projectiles.splice(idx,1);
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                // outer field
+                ctx.fillStyle = 'rgba(58,0,102,0.12)';
+                ctx.beginPath(); ctx.arc(0,0,this.suctionRadius,0,Math.PI*2); ctx.fill();
+                // core
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = '#a080ff'; ctx.shadowBlur = 26;
+                ctx.beginPath(); ctx.arc(0,0,this.radius,0,Math.PI*2); ctx.fill();
+                // spiral strokes
+                ctx.strokeStyle = '#a080ff'; ctx.lineWidth = 3; ctx.globalAlpha = 0.9;
+                for (let i=0;i<4;i++){ const ang = i*(Math.PI*0.5)+this.rotation; ctx.beginPath(); ctx.arc(0,0,this.radius* (0.6 + i*0.12), ang, ang + Math.PI*0.25); ctx.stroke(); }
+                ctx.restore();
+            }
+        }
+
+        // Fruit class
+        class Fruit {
+            constructor(x, y, type) {
+                this.x = x;
+                this.y = y;
+                this.type = type;
+                this.radius = 15;
+                this.bobOffset = Math.random() * Math.PI * 2;
+            }
+
+            update() {
+                // Bobbing animation
+                this.bobOffset += 0.1;
+            }
+
+            draw() {
+                FruitArt.draw(ctx, this.type, this.x, this.y + Math.sin(this.bobOffset) * 4, 46, true);
+            }
+        }
+
+        // Dropped Item class
+        class DroppedItem {
+            constructor(x, y, type, value) {
+                this.x = x;
+                this.y = y;
+                this.type = type; // 'coin', 'potion', 'fruit'
+                this.value = value; // coin amount, heal amount, or fruit type
+                this.radius = 12;
+                this.bobOffset = Math.random() * Math.PI * 2;
+                this.life = 1800; // 30 seconds at 60fps
+                this.collected = false;
+            }
+
+            update() {
+                this.bobOffset += 0.08;
+                this.life--;
+                
+                // Fade out when about to expire
+                if (this.life < 180) { // Last 3 seconds
+                    this.fadeAlpha = this.life / 180;
+                } else {
+                    this.fadeAlpha = 1;
+                }
+                
+                // Check collection by player
+                const dist = player.getDistance(this);
+                if (dist < 30 && !this.collected) {
+                    this.collect();
+                }
+            }
+
+            collect() {
+                this.collected = true;
+                
+                switch (this.type) {
+                    case 'coin':
+                        player.gold += this.value;
+                        
+                        // Coin pickup effect
+                        const coinEffect = {
+                            x: this.x,
+                            y: this.y,
+                            text: `+${this.value} Gold`,
+                            life: 40,
+                            type: 'goldpickup',
+                            color: '#FFD700'
+                        };
+                        effects.push(coinEffect);
+                        break;
+                        
+                    case 'potion':
+                        const healAmount = Math.min(this.value, player.maxHp - player.hp);
+                        player.hp += healAmount;
+                        
+                        // Healing effect
+                        const healEffect = {
+                            x: player.x,
+                            y: player.y,
+                            radius: 25,
+                            life: 30,
+                            type: 'heal'
+                        };
+                        effects.push(healEffect);
+                        
+                        const healTextEffect = {
+                            x: this.x,
+                            y: this.y,
+                            text: `+${healAmount} HP`,
+                            life: 40,
+                            type: 'healpickup',
+                            color: '#00FF00'
+                        };
+                        effects.push(healTextEffect);
+                        break;
+                        
+                    case 'fruit':
+                        // Try to add fruit to inventory. If duplicate exists, convert duplicate to gold instead.
+                        const fruitType = this.value;
+                        const inv = player.inventory;
+                        const existingIndex = inv.findFruitIndex(fruitType);
+                        if (existingIndex !== -1) {
+                            // duplicate: convert to gold
+                            const goldAmount = 50 + player.level * 10; // tunable
+                            player.gold += goldAmount;
+                            const dupEffect = { x: this.x, y: this.y, text: `Duplicate -> +${goldAmount} Gold`, life: 40, type: 'goldpickup', color:'#FFD700' };
+                            effects.push(dupEffect);
+                        } else {
+                            // store in inventory, if full, fallback to equip as before
+                            const added = inv.add({ type: 'fruit', value: fruitType });
+                            if (!added) {
+                                // inventory full: fallback to equipping directly
+                                player.fruit = fruitType;
+                                
+                                effects.push({ x: this.x, y: this.y, text: `${FRUITS[fruitType].name}`, life: 50, type:'fruitpickup', color: FRUITS[fruitType].color });
+                            } else {
+                                // show stored effect
+                                effects.push({ x: this.x, y: this.y, text: `Stored ${FRUITS[fruitType].name}`, life: 40, type: 'fruitpickup', color: FRUITS[fruitType].color });
+                            }
+                        }
+                        break;
+
+                    case 'poisoncloud':
+                        // lingering poisonous puddle that deals DOT to enemies inside
+                        if (!effect._init) effect._init = true;
+                        // gentle expansion then steady
+                        effect.radius = Math.min(effect.maxRadius || 48, (effect.radius || 8) + 1.2);
+                        ctx.fillStyle = effect.color || 'rgba(50,180,50,0.12)';
+                        ctx.shadowColor = effect.color || 'rgba(80,200,80,0.9)';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (effect.maxLife || 160) + 0.05);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // small drifting particles
+                        for (let i = 0; i < 6; i++) {
+                            const a = (i / 6) * Math.PI * 2 + effect.life * 0.02;
+                            const px = effect.x + Math.cos(a) * (effect.radius * 0.6 + Math.sin(effect.life*0.05+i)*6);
+                            const py = effect.y + Math.sin(a) * (effect.radius * 0.6 + Math.cos(effect.life*0.05+i)*6);
+                            ctx.fillStyle = 'rgba(150,255,150,0.18)';
+                            ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
+                        }
+
+                        // apply poison DOT every 600ms
+                        if (!effect._lastTick) effect._lastTick = Date.now();
+                        if (Date.now() - effect._lastTick > 600) {
+                            effect._lastTick = Date.now();
+                            enemies.forEach(enemy => {
+                                const d = Math.hypot(enemy.x - effect.x, enemy.y - effect.y);
+                                if (d < effect.radius) {
+                                    enemy.burning = (enemy.burning || 0) + (effect.dot || 30); // reuse burning for DOT
+                                }
+                            });
+                        }
+                        break;
+
+                    case 'feathertrail':
+                        // small decorative feather streaks used by Quetzalcoatl skill
+                        ctx.save();
+                        ctx.translate(effect.x, effect.y);
+                        ctx.rotate(effect.angle || 0);
+                        ctx.globalAlpha = Math.max(0.12, effect.life / 60);
+                        ctx.fillStyle = effect.color || '#9fe7a8';
+                        ctx.shadowColor = effect.color || '#9fe7a8';
+                        ctx.shadowBlur = 12;
+                        // feather shape (ellipse + center quill)
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, effect.w || 10, effect.h || 4, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                        ctx.restore();
+                        break;
+                }
+                
+                player.updateUI();
+                
+                // Remove from array
+                const index = droppedItems.indexOf(this);
+                if (index > -1) {
+                    droppedItems.splice(index, 1);
+                }
+            }
+
+            draw() {
+                if(this.type === 'fruit') {
+                    ctx.save();ctx.globalAlpha=this.fadeAlpha ?? 1;
+                    FruitArt.draw(ctx,this.value,this.x,this.y+Math.sin(this.bobOffset)*4,42,true);
+                    ctx.restore();return;
+                }
+                if (this.collected) return;
+                
+                ctx.save();
+                ctx.globalAlpha = this.fadeAlpha;
+                ctx.translate(this.x, this.y + Math.sin(this.bobOffset) * 4);
+                
+                switch (this.type) {
+                    case 'coin':
+                        // Gold coin
+                        ctx.fillStyle = '#FFD700';
+                        ctx.shadowColor = '#FFD700';
+                        ctx.shadowBlur = 10;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Coin details
+                        ctx.fillStyle = '#FFA500';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, this.radius * 0.7, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Coin symbol
+                        ctx.fillStyle = '#FFD700';
+                        ctx.font = 'bold 12px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('$', 0, 4);
+                        break;
+                        
+                    case 'potion':
+                        // Potion bottle
+                        ctx.fillStyle = '#FF69B4';
+                        ctx.shadowColor = '#FF69B4';
+                        ctx.shadowBlur = 8;
+                        
+                        // Bottle body
+                        ctx.beginPath();
+                        ctx.roundRect(-8, -6, 16, 12, 4);
+                        ctx.fill();
+                        
+                        // Bottle neck
+                        ctx.fillStyle = '#8B4513';
+                        ctx.fillRect(-3, -10, 6, 6);
+                        
+                        // Cork
+                        ctx.fillStyle = '#D2691E';
+                        ctx.fillRect(-4, -12, 8, 3);
+                        
+                        // Liquid
+                        ctx.fillStyle = '#FF1493';
+                        ctx.beginPath();
+                        ctx.roundRect(-6, -4, 12, 8, 2);
+                        ctx.fill();
+                        
+                        // Shine effect
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                        ctx.beginPath();
+                        ctx.arc(-4, -2, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'fruit':
+                        // Fruit with special glow
+                        if (this.value === 'DRAGON') {
+                            // Flame aura
+                            ctx.fillStyle = 'rgba(255,140,80,' + (0.6 * this.fadeAlpha) + ')';
+                            ctx.shadowColor = '#ff9966';
+                            ctx.shadowBlur = 25;
+                            ctx.beginPath();
+                            ctx.arc(0, 0, this.radius + 8, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            // Spiky dragon fruit
+                            ctx.fillStyle = FRUITS[this.value].color;
+                            for (let i = 0; i < 8; i++) {
+                                const a = (i / 8) * Math.PI * 2 + this.bobOffset * 0.3;
+                                const r1 = this.radius * 0.6;
+                                const r2 = this.radius + 6;
+                                ctx.beginPath();
+                                ctx.moveTo(Math.cos(a) * r1, Math.sin(a) * r1);
+                                ctx.lineTo(Math.cos(a + 0.1) * r2, Math.sin(a + 0.1) * r2);
+                                ctx.lineTo(Math.cos(a - 0.1) * r2, Math.sin(a - 0.1) * r2);
+                                ctx.closePath();
+                                ctx.fill();
+                            }
+
+                            ctx.fillStyle = '#fff2e6';
+                            ctx.beginPath();
+                            ctx.arc(0, 0, this.radius * 0.6, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else {
+                            // Normal fruit appearance
+                            ctx.fillStyle = FRUITS[this.value].color;
+                            ctx.shadowColor = FRUITS[this.value].color;
+                            ctx.shadowBlur = 15;
+                            ctx.beginPath();
+                            ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            // Fruit pattern
+                            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+                            ctx.beginPath();
+                            ctx.arc(-4, -4, 2, 0, Math.PI * 2);
+                            ctx.arc(4, -4, 2, 0, Math.PI * 2);
+                            ctx.arc(0, 4, 2, 0, Math.PI * 2);
+                            ctx.fill();
+
+                            // Special aura for rare fruits
+                            ctx.strokeStyle = FRUITS[this.value].color;
+                            ctx.lineWidth = 2;
+                            ctx.globalAlpha = this.fadeAlpha * 0.5;
+                            ctx.beginPath();
+                            ctx.arc(0, 0, this.radius + 5 + Math.sin(this.bobOffset * 2) * 3, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
+                        break;
+                }
+                
+                ctx.restore();
+            }
+        }
+
+        // Portal class
+        class Portal {
+            constructor(x, y, targetIsland) {
+                this.x = x;
+                this.y = y;
+                this.targetIsland = targetIsland;
+                this.radius = 30;
+                this.rotation = 0;
+            }
+
+            update() {
+                this.rotation += 0.05;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // Portal effect
+                ctx.fillStyle = 'rgba(153, 102, 255, 0.8)';
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = 'rgba(102, 51, 204, 0.6)';
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius * 0.7, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Swirl pattern
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let i = 0; i < 3; i++) {
+                    const angle = (i / 3) * Math.PI * 2;
+                    ctx.moveTo(Math.cos(angle) * 10, Math.sin(angle) * 10);
+                    ctx.lineTo(Math.cos(angle) * 25, Math.sin(angle) * 25);
+                }
+                ctx.stroke();
+                
+                ctx.restore();
+                
+                // Portal label
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(gameState.islands[this.targetIsland].name, this.x, this.y + 45);
+            }
+        }
+
+    // Game arrays
+    const enemies = [];
+    const projectiles = [];
+    const fruits = [];
+    const portals = [];
+    const effects = [];
+    const tempLightnings = [];
+    let screenFlash = 0;
+    // Special attacks container (timed ability controllers)
+    const specialAttacks = [];
+    // --- Zenith: Astral Maul skill implementation ---
+    // Helper: draw a simple star glyph (used by the attack visuals)
+    function drawStar(ctx, x, y, outerR, innerR, points, rotation, color, alpha) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rotation || 0);
+        ctx.beginPath();
+        for (let i = 0; i < points * 2; i++) {
+            const r = (i % 2 === 0) ? outerR : innerR;
+            const a = (i / (points * 2)) * Math.PI * 2;
+            const px = Math.cos(a) * r;
+            const py = Math.sin(a) * r;
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.globalAlpha = (typeof alpha === 'number') ? alpha : 0.95;
+        ctx.fillStyle = color || '#bfeaff';
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // Controller: AstralMaulAttack - dash-chain between enemies then spawn StarCrack
+    class AstralMaulAttack {
+        constructor(owner) {
+            this.owner = owner;
+            this.pos = { x: owner.x, y: owner.y };
+            this.dashIndex = 0;
+            this.maxDashes = 20; // number of chain dashes before final
+            this.state = 'seek';
+            this.currentTarget = null;
+            this.progress = 0;
+            this.finished = false;
+            this.momentum = 0; // increases per hit
+            this._travelFrames = 10; // frames per dash
+            // pre-select chained targets (nearest neighbors)
+            const candidates = enemies.slice().sort((a,b)=>Math.hypot(a.x-owner.x,a.y-owner.y)-Math.hypot(b.x-owner.x,b.y-owner.y));
+            this.targets = candidates.slice(0, Math.min(this.maxDashes, candidates.length));
+        }
+
+        update() {
+            if (this.finished) return;
+            // If currently traveling to a target
+            if (this.state === 'travel') {
+                this.progress++;
+                const t = Math.min(1, this.progress / this._travelFrames);
+                this.pos.x = this.lerp(this.startX, this.targetX, t);
+                this.pos.y = this.lerp(this.startY, this.targetY, t);
+                // move player along for dramatic effect
+                try { this.owner.x = this.pos.x; this.owner.y = this.pos.y; } catch(e){}
+
+                // spawn star trail
+                    if (Math.random() < 0.6) {
+                    effects.push({ x: this.pos.x + (Math.random()-0.5)*6, y: this.pos.y + (Math.random()-0.5)*6, life: 18, type: 'powerParticle', rot: Math.random()*Math.PI*2, color: '#dff6ff', radius: 6 });
+                }
+
+                if (t >= 1) {
+                    // impact on target
+                    if (this.currentTarget && !this.currentTarget._dead) {
+                        try { this.currentTarget.takeDamage(computeScaledDamage(90 + this.dashIndex * 30, this.owner)); } catch(e){}
+                        this.currentTarget.stunned = Math.max(this.currentTarget.stunned || 0, 20);
+                        effects.push({ x: this.currentTarget.x, y: this.currentTarget.y, radius: 24, life: 30, type: 'seraphimpact', color: '#bfeaff' });
+                        this.momentum++;
+                    }
+                    this.dashIndex++;
+                    if (this.dashIndex >= this.maxDashes) {
+                        // spawn final StarCrack at current position
+                        specialAttacks.push(new StarCrack(this.pos.x, this.pos.y, this.momentum, this.owner));
+                        this.finished = true;
+                    } else {
+                        this.state = 'seek';
+                    }
+                }
+                return;
+            }
+
+            // Seek next target
+            if (this.state === 'seek') {
+                // pick next from preselected targets or find nearest
+                this.currentTarget = this.targets.shift() || this.findNearestEnemy(420);
+                if (!this.currentTarget) {
+                    // nothing to chain to - immediately spawn final
+                    specialAttacks.push(new StarCrack(this.pos.x, this.pos.y, this.momentum, this.owner));
+                    this.finished = true;
+                    return;
+                }
+                this.startX = this.pos.x; this.startY = this.pos.y;
+                this.targetX = this.currentTarget.x + (Math.random()-0.5)*8;
+                this.targetY = this.currentTarget.y + (Math.random()-0.5)*8;
+                this.progress = 0;
+                this.state = 'travel';
+            }
+        }
+
+        findNearestEnemy(range) {
+            let best = null; let bd = Infinity;
+            enemies.forEach(e => { const d = Math.hypot(e.x - this.pos.x, e.y - this.pos.y); if (d < bd && d < range) { bd = d; best = e; } });
+            return best;
+        }
+
+        lerp(a,b,t){ return a + (b - a) * t; }
+
+        draw(ctx) {
+            if (this.finished) return;
+            // small glowing path and rotating star at current pos
+            ctx.save();
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.fillStyle = 'rgba(190,234,255,0.18)';
+            ctx.beginPath(); ctx.arc(this.pos.x, this.pos.y, 30, 0, Math.PI*2); ctx.fill();
+            drawStar(ctx, this.pos.x, this.pos.y, 16, 7, 5, (Date.now()%1000)/1000*Math.PI*2, '#e8fbff', 0.95);
+            ctx.restore();
+        }
+    }
+
+    // Controller: StarCrack final vortex
+    class StarCrack {
+        constructor(x, y, momentum = 0, owner = null) {
+            this.x = x; this.y = y; this.momentum = momentum; this.owner = owner;
+            this.life = 90; this.maxLife = 90; this.angle = 0; this.finished = false; this._burst = false;
+            this.baseRadius = 80 + (momentum * 28);
+        }
+
+        update() {
+            if (this.finished) return;
+            this.angle += 0.12;
+            this.life--;
+            // pull enemies gently towards center while life > 30
+            enemies.forEach(e => {
+                const dx = this.x - e.x; const dy = this.y - e.y; const d = Math.hypot(dx, dy);
+                if (d < this.baseRadius * 1.6) {
+                    const pull = (1 - d / (this.baseRadius * 1.6)) * (0.12 + this.momentum * 0.02);
+                    e.x += dx * pull; e.y += dy * pull;
+                }
+            });
+
+            if (!this._burst && this.life <= 30) {
+                // final burst
+                const dmg = computeScaledDamage(160 + this.momentum * 80, this.owner);
+                enemies.forEach(e => {
+                    const d = Math.hypot(e.x - this.x, e.y - this.y);
+                    if (d < this.baseRadius) {
+                        try { e.takeDamage(dmg); } catch (e) {}
+                        // knockback
+                        const ang = Math.atan2(e.y - this.y, e.x - this.x);
+                        e.x += Math.cos(ang) * 60; e.y += Math.sin(ang) * 60;
+                        effects.push({ x: e.x, y: e.y, radius: 22, life: 40, type: 'seraphimpact', color: '#dff6ff' });
+                    }
+                });
+                // visual shockwave
+                effects.push({ x: this.x, y: this.y, radius: this.baseRadius * 1.3, life: 36, type: 'tidalFoam', color: 'rgba(180,245,255,0.24)' });
+                this._burst = true;
+            }
+
+            if (this.life <= 0) this.finished = true;
+        }
+
+        draw(ctx) {
+            if (this.finished) return;
+            ctx.save();
+            ctx.globalAlpha = Math.max(0.12, this.life / this.maxLife);
+            // rotating rings
+            ctx.strokeStyle = 'rgba(190,240,255,0.9)';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.baseRadius * (0.6 + 0.4 * Math.sin(this.angle)), 0, Math.PI*2);
+            ctx.stroke();
+            ctx.strokeStyle = 'rgba(120,210,255,0.6)'; ctx.lineWidth = 2;
+            for (let i=0;i<6;i++) {
+                const a = this.angle + (i/6)*Math.PI*2;
+                const rx = this.x + Math.cos(a) * (this.baseRadius * 0.42);
+                const ry = this.y + Math.sin(a) * (this.baseRadius * 0.42);
+                drawStar(ctx, rx, ry, 8, 4, 5, a + this.angle*0.5, '#e8fbff', 0.9);
+            }
+            ctx.restore();
+        }
+    }
+    // RubberKongOrgan removed — Rubber King now uses Z/X/C/V skills (jetPistol, rocketDash, gatlingGun, kingKongGun)
+
+        // Controller: CarnivorousGarden - planted seed grows into a trap that swallows, chews, then spits enemies as projectiles
+        class CarnivorousGarden {
+            constructor(owner, x, y) {
+                this.owner = owner;
+                this.x = x;
+                this.y = y;
+                this.state = 'growing';
+                this.growTime = 30; // frames to grow
+                this.radius = 10;
+                this.maxRadius = 120;
+                this.activeTimer = 0;
+                this.chewTimer = 0;
+                this.swallowed = []; // stored enemy objects
+                this.capacity = 3; // how many enemies to swallow
+                this.chewDuration = 60 * 3; // chew time in frames
+                this.activeDuration = 60 * 2; // active swallow window
+                this.finished = false;
+
+                // telegraph plant location
+                effects.push({ x: this.x, y: this.y, radius: 18, life: 28, type: 'telegraphCircle', color: FRUITS.BLOOM.color });
+            }
+
+            update() {
+                if (this.finished) return;
+
+                if (this.state === 'growing') {
+                    this.growTime--;
+                    this.radius = Math.min(this.maxRadius, this.radius + 4);
+                    if (this.growTime <= 0) {
+                        this.state = 'active';
+                        this.activeTimer = this.activeDuration;
+                        // spawn persistent trap visual
+                        effects.push({ x: this.x, y: this.y, radius: this.radius, life: this.activeDuration, type: 'carnivortrap', color: FRUITS.BLOOM.color });
+                    }
+                    return;
+                }
+
+                if (this.state === 'active') {
+                    this.activeTimer--;
+                    // attempt to swallow nearby enemies while capacity remains
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        if (this.swallowed.length >= this.capacity) break;
+                        const e = enemies[i];
+                        if (!e || e.dead) continue;
+                        const d = Math.hypot(e.x - this.x, e.y - this.y);
+                        if (d < Math.max(24, this.radius * 0.6)) {
+                            // detach enemy from world and store it
+                            enemies.splice(i, 1);
+                            e._wasSwallowed = true;
+                            this.swallowed.push(e);
+                            effects.push({ x: e.x, y: e.y, radius: 18, life: 28, type: 'plantchew', color: FRUITS.BLOOM.color });
+                        }
+                    }
+
+                    if (this.activeTimer <= 0) {
+                        this.state = 'chewing';
+                        this.chewTimer = this.chewDuration;
+                        effects.push({ x: this.x, y: this.y, radius: this.radius, life: this.chewDuration, type: 'plantchew', color: FRUITS.BLOOM.color });
+                    }
+                    return;
+                }
+
+                if (this.state === 'chewing') {
+                    this.chewTimer--;
+                    // periodic chew bites (visual + reduce hp stored on swallowed enemy object)
+                    if (this.chewTimer % 30 === 0) {
+                        this.swallowed.forEach(s => {
+                            // reduce a fraction of original HP (simulate being chewed)
+                            s.hp = Math.max(0, (s.hp || s.maxHp) - Math.max(6, Math.floor((s.maxHp || 60) * 0.06)));
+                            effects.push({ x: this.x + (Math.random() - 0.5) * 24, y: this.y + (Math.random() - 0.5) * 24, radius: 10, life: 20, type: 'rubberimpact', color: FRUITS.BLOOM.color });
+                        });
+                    }
+
+                    if (this.chewTimer <= 0) {
+                        // spit swallowed enemies as projectiles at other nearby enemies
+                        this.swallowed.forEach(s => {
+                            const dmg = computeScaledDamage(FRUITS.BLOOM.damage * 1.6, this.owner);
+                            // pick a target enemy to aim at (nearest), fallback to random direction
+                            let target = null; let bd = Infinity;
+                            enemies.forEach(e => { const dd = Math.hypot(e.x - this.x, e.y - this.y); if (dd < bd) { bd = dd; target = e; } });
+                            const ang = target ? Math.atan2(target.y - this.y, target.x - this.x) : (Math.random() * Math.PI * 2);
+                            const p = new Projectile(this.x, this.y, ang, 10 + Math.random() * 3, dmg, FRUITS.BLOOM.color, 'plantspit', this.owner);
+                            p.life = 90;
+                            projectiles.push(p);
+                            effects.push({ x: this.x, y: this.y, radius: 12, life: 22, type: 'prismimpact', color: FRUITS.BLOOM.color });
+                        });
+
+                        // clear swallowed list (we consider them converted to projectiles)
+                        this.swallowed.length = 0;
+                        this.finished = true;
+                    }
+                    return;
+                }
+            }
+
+            draw(ctx) {
+                if (this.finished) return;
+                // simple plant body with pulsing mouth
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                const pulse = 1 + Math.sin(Date.now() / 260) * 0.06;
+                ctx.scale(pulse, pulse);
+
+                ctx.fillStyle = FRUITS.BLOOM.color || '#ff77c2';
+                ctx.beginPath();
+                ctx.moveTo(0, -this.radius * 0.6);
+                ctx.quadraticCurveTo(this.radius * 0.6, -this.radius * 0.2, this.radius * 0.4, this.radius * 0.6);
+                ctx.quadraticCurveTo(0, this.radius * 0.4, -this.radius * 0.4, this.radius * 0.6);
+                ctx.quadraticCurveTo(-this.radius * 0.6, -this.radius * 0.2, 0, -this.radius * 0.6);
+                ctx.fill();
+
+                // mouth teeth
+                ctx.fillStyle = '#ffffff';
+                for (let i = 0; i < 6; i++) {
+                    const a = -Math.PI / 2 + (i / 6) * Math.PI;
+                    const tx = Math.cos(a) * this.radius * 0.35; const ty = Math.sin(a) * this.radius * 0.35;
+                    ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(tx + Math.cos(a) * 6, ty + Math.sin(a) * 6); ctx.lineTo(tx + Math.cos(a + 0.22) * 8, ty + Math.sin(a + 0.22) * 8); ctx.fill();
+                }
+
+                ctx.restore();
+            }
+        }
+
+            // Controller: MechaMissileBarrage - launches 100 auto-aim missiles over 5s
+            class MechaMissileBarrage {
+                constructor(owner) {
+                    this.owner = owner;
+                    this.life = 60 * 5; // 5 seconds
+                    this.spawnInterval = 3; // spawn one missile every 3 frames -> ~10 per 30 frames
+                    this.spawnTimer = 0;
+                    this.spawned = 0;
+                    this.total = 100;
+                    this.finished = false;
+                    this.lastHitPos = null; // for chain visuals
+                }
+
+                update() {
+                    if (this.finished) return;
+                    // spawn schedule
+                    if (this.spawned < this.total) {
+                        if (this.spawnTimer <= 0) {
+                            // spawn a missile from sky aimed at a random enemy
+                            // spawn missile from player position (slightly in front) so it appears fired by the player
+                            const muzzleOffset = 28;
+                            const sx = this.owner.x + Math.cos(this.owner.angle) * muzzleOffset;
+                            const sy = this.owner.y + Math.sin(this.owner.angle) * muzzleOffset;
+                            // pick a random enemy target if available
+                            let target = null;
+                            if (enemies && enemies.length) target = enemies[Math.floor(Math.random() * enemies.length)];
+                            // aim toward target if exists, otherwise shoot roughly in player's forward direction with small spread
+                            let ang;
+                            if (target) ang = Math.atan2(target.y - sy, target.x - sx);
+                            else ang = this.owner.angle + (Math.random() - 0.5) * 0.3;
+                            const speed = 10 + Math.random() * 2;
+                            const dmg = Math.max(6, Math.floor(FRUITS.HITO_MECHA.damage || 12));
+                            const p = new Projectile(sx, sy, ang, speed, dmg, FRUITS.HITO_MECHA.color || '#99aaff', 'mechaMissile', this.owner);
+                            p.target = target || null;
+                            p.barrageOwner = this;
+                            p.radius = 8;
+                            p.knockback = 220; // strong knockback
+                            p.chainable = true;
+                            projectiles.push(p);
+                            // launch visual + sound-like flurry via small powerParticles
+                            for (let i = 0; i < 3; i++) effects.push({ x: sx + (Math.random()-0.5)*24, y: sy + (Math.random()-0.5)*24, radius: 4 + Math.random()*4, life: 24, type: 'powerParticle', color: FRUITS.HITO_MECHA.color });
+
+                            this.spawned++;
+                            this.spawnTimer = this.spawnInterval;
+                        } else {
+                            this.spawnTimer--;
+                        }
+                    } else {
+                        // all missiles spawned; finish when no more missiles belonging to this barrage remain
+                        const active = projectiles.find(p => p && p.type === 'mechaMissile' && p.barrageOwner === this);
+                        if (!active) this.finished = true;
+                    }
+                }
+
+                draw(ctx) {
+                    if (this.finished) return;
+                    // small HUD near owner: show remaining missiles
+                    const rem = Math.max(0, this.total - this.spawned);
+                    ctx.save();
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillStyle = FRUITS.HITO_MECHA.color || '#99aaff';
+                    ctx.font = '12px Arial';
+                    ctx.fillText(`Missiles: ${rem}`, this.owner.x + 12, this.owner.y - 36);
+                    ctx.restore();
+                }
+            }
+
+                // Controller: CaptainHookAttack - throw grapnels that latch, pull, smash and apply timed marks
+                class CaptainHookAttack {
+                    constructor(owner) {
+                        this.owner = owner;
+                        this.hooks = [];
+                        this.finished = false;
+                        this.maxHooks = 3;
+                        this.range = 520;
+                        this.pullSpeed = FRUITS.CAPTAIN_HOOK.pullSpeed || 8;
+                        this.smashDamage = FRUITS.CAPTAIN_HOOK.smashDamage || 110;
+                        this.markAoE = FRUITS.CAPTAIN_HOOK.markAoE || 48;
+                        this.markDelay = FRUITS.CAPTAIN_HOOK.markDelay || 2000;
+                        // select nearest targets up to maxHooks
+                        const candidates = enemies.slice().sort((a,b)=>Math.hypot(a.x-owner.x,a.y-owner.y)-Math.hypot(b.x-owner.x,b.y-owner.y));
+                        for (let i = 0; i < this.maxHooks; i++) {
+                            const target = candidates[i] || null;
+                            const angle = owner.angle + (i - (this.maxHooks-1)/2) * 0.28;
+                            const tx = target ? target.x : owner.x + Math.cos(angle) * this.range;
+                            const ty = target ? target.y : owner.y + Math.sin(angle) * this.range;
+                            this.hooks.push({ x: owner.x, y: owner.y, tx, ty, state: 'flying', speed: 18, target: target, latched: false, finished: false });
+                        }
+                        this.marks = []; // { enemy, expireAt }
+                    }
+
+                    update() {
+                        if (this.finished) return;
+
+                        // Update hooks
+                        this.hooks.forEach(h => {
+                            if (h.finished) return;
+                            if (h.state === 'flying') {
+                                const dx = h.tx - h.x; const dy = h.ty - h.y; const d = Math.hypot(dx, dy) || 1;
+                                const step = Math.min(h.speed, d);
+                                h.x += (dx / d) * step; h.y += (dy / d) * step;
+
+                                // check for latching onto a real target
+                                if (h.target && !h.target.dead) {
+                                    const d2 = Math.hypot(h.target.x - h.x, h.target.y - h.y);
+                                    if (d2 < 12 + (h.target.radius || 12)) {
+                                        h.state = 'latched'; h.latched = true; h.latchedTarget = h.target;
+                                    }
+                                } else {
+                                    // reached anchor point (no living target)
+                                    if (d < 8) { h.state = 'anchored'; h.anchorX = h.x; h.anchorY = h.y; h.pullTimer = 30; }
+                                }
+                            } else if (h.state === 'latched') {
+                                if (!h.latchedTarget || h.latchedTarget.dead) {
+                                    // target died or invalid: convert to anchored at current position
+                                    h.state = 'anchored';
+                                    h.latched = false;
+                                    h.anchorX = h.x; h.anchorY = h.y; h.pullTimer = 30;
+                                    return;
+                                }
+                                const tgt = h.latchedTarget;
+                                const dx = this.owner.x - tgt.x; const dy = this.owner.y - tgt.y; const dist = Math.hypot(dx, dy) || 1;
+                                const pull = Math.min(this.pullSpeed, dist);
+                                tgt.x += (dx / dist) * pull; tgt.y += (dy / dist) * pull;
+                                tgt.stunned = Math.max(tgt.stunned || 0, 8);
+
+                                // If target close enough to owner -> smash
+                                if (dist < this.owner.radius + 22) {
+                                    const dmg = computeScaledDamage(this.smashDamage, this.owner);
+                                    try { tgt.takeDamage(dmg); } catch (e) {}
+                                    const ang = Math.atan2(tgt.y - this.owner.y, tgt.x - this.owner.x);
+                                    tgt.x += Math.cos(ang) * 80; tgt.y += Math.sin(ang) * 80;
+                                    effects.push({ x: tgt.x, y: tgt.y, radius: 32, life: 40, type: 'impact', color: FRUITS.CAPTAIN_HOOK.color });
+                                    // Mark the enemy for delayed explosion
+                                    const expire = Date.now() + this.markDelay;
+                                    this.marks.push({ enemy: tgt, expireAt: expire });
+                                    try { tgt._captainHookMarked = expire; } catch (e) {}
+                                    h.finished = true;
+                                }
+                            } else if (h.state === 'anchored') {
+                                h.pullTimer--; if (h.pullTimer <= 0) h.finished = true;
+                            }
+                        });
+
+                        // process marks
+                        const now = Date.now();
+                        for (let i = this.marks.length - 1; i >= 0; i--) {
+                            const m = this.marks[i];
+                            if (!m.enemy || m.enemy.dead) { this.marks.splice(i, 1); continue; }
+                            if (now >= m.expireAt) {
+                                const aoe = this.markAoE;
+                                const dmg = computeScaledDamage(FRUITS.CAPTAIN_HOOK.damage || 72, this.owner);
+                                enemies.forEach(e => {
+                                    const d = Math.hypot(e.x - m.enemy.x, e.y - m.enemy.y);
+                                    if (d < aoe) {
+                                        try { e.takeDamage(dmg); } catch (e) {}
+                                        const ang = Math.atan2(e.y - m.enemy.y, e.x - m.enemy.x);
+                                        e.x += Math.cos(ang) * 24; e.y += Math.sin(ang) * 24;
+                                        effects.push({ x: e.x, y: e.y, radius: 18, life: 28, type: 'explosion', color: FRUITS.CAPTAIN_HOOK.color });
+                                    }
+                                });
+                                effects.push({ x: m.enemy.x, y: m.enemy.y, radius: aoe, life: 36, type: 'boom', color: FRUITS.CAPTAIN_HOOK.color });
+                                try { delete m.enemy._captainHookMarked; } catch (e) {}
+                                this.marks.splice(i, 1);
+                            }
+                        }
+
+                        // finished when all hooks done and no pending marks
+                        const allHooksDone = this.hooks.every(h => h.finished);
+                        const noMarks = this.marks.length === 0;
+                        if (allHooksDone && noMarks) this.finished = true;
+                    }
+
+                    draw(ctx) {
+                        if (this.finished) return;
+                        ctx.save(); ctx.globalCompositeOperation = 'lighter';
+                        this.hooks.forEach(h => {
+                            ctx.strokeStyle = FRUITS.CAPTAIN_HOOK.color || '#8bd3ff';
+                            ctx.lineWidth = 4;
+                            ctx.beginPath(); ctx.moveTo(this.owner.x, this.owner.y); ctx.lineTo(h.x, h.y); ctx.stroke();
+                            ctx.fillStyle = '#d0d0d0'; ctx.beginPath(); ctx.arc(h.x, h.y, 6, 0, Math.PI * 2); ctx.fill();
+                            ctx.fillStyle = FRUITS.CAPTAIN_HOOK.color || '#8bd3ff'; ctx.globalAlpha = 0.95; ctx.beginPath(); ctx.arc(h.x, h.y, 4, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1.0;
+                        });
+                        // draw marks countdown
+                        this.marks.forEach(m => {
+                            const t = Math.max(0, (m.expireAt - Date.now()) / (this.markDelay || 2000));
+                            ctx.save(); ctx.globalAlpha = 0.6 * t; ctx.strokeStyle = FRUITS.CAPTAIN_HOOK.color || '#8bd3ff'; ctx.lineWidth = 2;
+                            ctx.beginPath(); ctx.arc(m.enemy.x, m.enemy.y, this.markAoE * (1 - t * 0.4), 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+                        });
+                        ctx.restore();
+                    }
+                }
+
+                const droppedItems = [];
+    const lavaPits = [];
+    let lastLavaTick = Date.now();
+
+        // Create player
+    // Player is a constant reference to the player instance. executeBossFruitSkill
+    // was refactored to avoid swapping the global `player`, so declaring as const is safe.
+    const player = new Player(canvas.width * 0.5, canvas.height * 0.55);
+
+    // Initialize game
+    player.generateIsland();
+
+    // Center camera on player at start
+    camera.x = player.x;
+    camera.y = player.y;
+
+        // --- Shop system ---
+        const SHOP = {
+            open: false,
+            items: {
+                1: { id:1, name: 'Gacha Buah Iblis', price:200 },
+                2: { id:2, name: 'Ramuan Kesehatan', price:50 },
+                3: { id:3, name: 'Peningkat Serangan', price:150 }
+            }
+        };
+
+        function getGachaPrice(level) {
+            // base price + scaling factor; tune as desired
+            const base = 150;
+            // price grows roughly linearly but smoother: base + level * 12, clamp
+            return Math.max(50, Math.floor(base + (level - 1) * 12));
+        }
+
+        function updateShopUI() {
+            const overlay = document.getElementById('shopOverlay');
+            if (!overlay) return;
+            overlay.style.display = SHOP.open ? 'flex' : 'none';
+            for (const key of Object.keys(SHOP.items)) {
+                const itm = SHOP.items[key];
+                const el = document.querySelector(`.shopItem[data-id="${key}"] .price`);
+                if (!el) continue;
+                // if gacha item, compute dynamic price
+                let priceToShow = itm.price;
+                if (itm.id === 1) priceToShow = getGachaPrice(player.level);
+                el.textContent = priceToShow;
+                el.className = (player.gold >= priceToShow) ? 'price affordable' : 'price notAffordable';
+            }
+            const msg = document.getElementById('shopMessage');
+            if (msg) msg.textContent = `Gold: ${Math.floor(player.gold)} — Pilih item (1/2/3)`;
+        }
+
+        function toggleShop() {
+            SHOP.open = !SHOP.open;
+            updateShopUI();
+        }
+
+        function setShopMessage(text, type) {
+            const msg = document.getElementById('shopMessage');
+            if (!msg) return;
+            msg.textContent = text;
+            msg.style.color = (type === 'notEnough') ? '#FF6666' : '#FFFFFF';
+        }
+
+        function buyItem(slot) {
+            if (!SHOP.items[slot]) return;
+            const item = SHOP.items[slot];
+            // decide price (dynamic for gacha)
+            const price = (item.id === 1) ? getGachaPrice(player.level) : item.price;
+            if (player.gold < price) {
+                setShopMessage('Tidak cukup gold!', 'notEnough');
+                return;
+            }
+            player.gold -= price;
+            switch (item.id) {
+                case 1:
+                    playGacha(price);
+                    break;
+                case 2:
+                    const heal = Math.min(50, player.maxHp - player.hp);
+                    player.hp += heal;
+                    spawnEffect({ x: player.x, y: player.y, text: `+${heal} HP`, life: 40, type: 'healpickup', color:'#00FF00'});
+                    setShopMessage(`Kamu mendapatkan +${heal} HP!`);
+                    break;
+                case 3:
+                    player.damage += 10;
+                    spawnDamageBoostEffect(player.x, player.y);
+                    setShopMessage('Damage +10 permanen!');
+                    break;
+            }
+            player.updateUI();
+            updateShopUI();
+        }
+
+        // Gacha pool: exclude boss-fruits (boss fruits are only from boss drops)
+        const GACHA_FRUITS = Object.keys(FRUITS).filter(k => FRUITS[k] && FRUITS[k].category && FRUITS[k].category !== 'bossfruit');
+
+        function playGacha(gachaPrice = null) {
+            const ring = document.getElementById('gachaRing');
+            const preview = document.getElementById('fruitPreview');
+            if (!ring || !preview) return;
+            ring.classList.add('spin');
+            const sparkles = document.getElementById('gachaSparkles');
+            if (sparkles) sparkles.innerHTML = '';
+            for (let i=0;i<8;i++) {
+                const s = document.createElement('div');
+                s.className = 'sparkle';
+                s.style.left = `${10 + Math.random()*120}px`;
+                s.style.top = `${10 + Math.random()*120}px`;
+                s.style.opacity = (0.6 + Math.random()*0.6);
+                if (sparkles) sparkles.appendChild(s);
+            }
+            setShopMessage('Gacha berjalan...');
+            let t = 0; const duration = 2000;
+            const interval = setInterval(()=>{
+                t += 100;
+                const pick = GACHA_FRUITS[Math.floor(Math.random()*GACHA_FRUITS.length)];
+                preview.style.background = `center / contain no-repeat url("${FruitArt.uri(pick)}")`; preview.title=FruitArt.name(pick);
+                if (t>=duration) {
+                    clearInterval(interval);
+                    ring.classList.remove('spin');
+                    if (sparkles) sparkles.innerHTML = '';
+                    const final = GACHA_FRUITS[Math.floor(Math.random()*GACHA_FRUITS.length)];
+                    preview.style.background = `center / contain no-repeat url("${FruitArt.uri(final)}")`; preview.title=FruitArt.name(final);
+                    // add to inventory instead of auto-equipping
+                    const added = player.inventory.add({ type: 'fruit', value: final });
+                    if (added) {
+                        spawnEffect({ x: player.x, y: player.y, text: `${FRUITS[final].name} (ke inventori)`, life: 60, type:'fruitpickup', color: FRUITS[final].color });
+                        setShopMessage(`Selamat! ${FRUITS[final].name} dikirim ke inventori.`);
+                    } else {
+                        // duplicate or full: convert duplicate into gold if duplicate, otherwise show full inventory
+                        // We interpret add() returning false as either duplicate or full. If duplicate, give 50% of gachaPrice.
+                        let converted = false;
+                        if (gachaPrice && player.inventory.findFruitIndex(final) !== -1) {
+                            const goldAmt = Math.floor((gachaPrice * 0.5));
+                            player.gold += goldAmt;
+                            spawnEffect({ x: player.x, y: player.y, text: `Duplicate -> +${goldAmt} Gold`, life: 60, type:'goldpickup', color: '#FFD700' });
+                            setShopMessage(`Duplicate! ${goldAmt} Gold diberikan sebagai pengganti.`);
+                            converted = true;
+                        }
+                        if (!converted) {
+                            // inventory full or other reason
+                            spawnEffect({ x: player.x, y: player.y, text: `${FRUITS[final].name} tidak ditambahkan (Inventori penuh)`, life: 60, type:'fruitpickup', color: FRUITS[final].color });
+                            setShopMessage(`Inventori penuh. ${FRUITS[final].name} tidak ditambahkan.`);
+                        }
+                    }
+                    player.updateUI();
+                }
+            }, 100);
+        }
+
+        function spawnEffect(e) { effects.push(e); }
+
+        function spawnDamageBoostEffect(x,y) {
+            const aura = { x, y, radius: 50, life: 90, type: 'damageAura' };
+            effects.push(aura);
+            for (let i=0;i<12;i++) {
+                const p = { x: x + (Math.random()-0.5)*30, y: y + (Math.random()-0.5)*30, vy: - (1+Math.random()*1.6), life: 40 + Math.random()*30, type: 'powerParticle' };
+                effects.push(p);
+            }
+        }
+
+        // Render background
+        function drawBackground() {
+            const island = gameState.islands[gameState.currentIsland];
+            
+            const theme = island.theme || '';
+            PirateArt.drawBackground(ctx, gameState.currentIsland, GAME_WIDTH, GAME_HEIGHT);
+
+            // draw lava pits if any
+            if (lavaPits && lavaPits.length) {
+                lavaPits.forEach(pit => {
+                    ctx.save();
+                    ctx.fillStyle = pit.glowColor || 'rgba(255,100,0,0.9)';
+                    ctx.beginPath();
+                    ctx.ellipse(pit.x, pit.y, pit.rx, pit.ry, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = pit.coreColor || 'rgba(120,20,0,0.9)';
+                    ctx.beginPath();
+                    ctx.ellipse(pit.x, pit.y, pit.rx * 0.6, pit.ry * 0.6, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+            }
+        }
+
+        // Render effects
+        function drawEffects() {
+            effects.forEach((effect, index) => {
+                ctx.save();
+                
+                switch (effect.type) {
+                    case 'slash':
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'impact':
+                        ctx.fillStyle = effect.color;
+                        ctx.globalAlpha = effect.life / 15;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'teleportLightning':
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.05);
+                        ctx.fillStyle = effect.color || '#dff8ff';
+                        ctx.shadowColor = '#63b3ed'; ctx.shadowBlur = 28;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / Math.max(1, effect._maxLife || 30) + 0.2), 0, Math.PI * 2);
+                        ctx.fill();
+                        // small bright core
+                        ctx.globalAlpha = Math.min(1, effect.life / 18 + 0.1);
+                        ctx.fillStyle = '#f8ffff';
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(4, (effect.radius || 8) * 0.14), 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'kirinRainTelegraph':
+                        // pulsing telegraph ring for the rain area
+                        ctx.save();
+                        ctx.lineWidth = 3;
+                        ctx.strokeStyle = 'rgba(175,235,255,0.28)';
+                        ctx.globalAlpha = Math.min(0.95, effect.life / Math.max(1, (effect._origLife || effect.life)) + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2); ctx.stroke();
+                        // subtle inner glow
+                        ctx.fillStyle = 'rgba(200,245,255,0.06)'; ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(6, effect.radius * 0.18), 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'kirinDrop':
+                    case 'waterDrop':
+                        // small falling droplet
+                        effect.y += 2 + (effect._speedOffset || 0);
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.05);
+                        ctx.fillStyle = effect.color || '#dff8ff';
+                        ctx.shadowColor = '#aeeaff'; ctx.shadowBlur = 10;
+                        ctx.beginPath(); ctx.ellipse(effect.x, effect.y, Math.max(2, effect.radius * 0.6), Math.max(3, effect.radius * 0.9), 0, 0, Math.PI * 2); ctx.fill();
+                        // tiny white core
+                        ctx.globalAlpha = Math.min(1, effect.life / 22 + 0.1);
+                        ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(effect.x, effect.y - 1, 1.6, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'lightningStrikeLarge':
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(1, effect.life / 36 + 0.08);
+                        ctx.fillStyle = effect.color || '#ffffff';
+                        ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 48;
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 36 + 0.25), 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'lightningChain':
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(1, effect.life / 28 + 0.05);
+                        ctx.fillStyle = effect.color || '#dff8ff';
+                        ctx.shadowColor = '#bfefff'; ctx.shadowBlur = 18;
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(3, effect.radius * 0.4), 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                        break;
+                        
+                    case 'damage':
+                        ctx.fillStyle = '#ff0000';
+                        ctx.font = 'bold 16px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.fillText(effect.text, effect.x, effect.y);
+                        effect.y -= 1;
+                        break;
+                        
+                    case 'death':
+                        ctx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+                        ctx.globalAlpha = effect.life / 20;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'levelup':
+                        ctx.strokeStyle = '#FFD700';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = effect.life / 60;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        break;
+                        
+                    case 'suction':
+                        // Move towards target
+                        const dx = effect.targetX - effect.x;
+                        const dy = effect.targetY - effect.y;
+                        effect.x += dx * 0.1;
+                        effect.y += dy * 0.1;
+                        
+                        ctx.fillStyle = 'rgba(153, 102, 255, 0.8)';
+                        ctx.globalAlpha = effect.life / 20;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'absorb':
+                        ctx.fillStyle = 'rgba(26, 0, 51, 0.9)';
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Shrinking effect
+                        effect.radius *= 0.95;
+                        break;
+                        
+                    case 'blackholeexplosion':
+                        ctx.fillStyle = 'rgba(153, 102, 255, 0.7)';
+                        ctx.globalAlpha = effect.life / 40;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Expanding effect
+                        effect.radius *= 1.05;
+                        break;
+
+                    case 'telegraphCircle':
+                        ctx.strokeStyle = effect.color || '#ff4444';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = Math.min(1, effect.life / 45 + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        break;
+
+                    case 'telegraphLine':
+                        ctx.strokeStyle = effect.color || '#ffffff';
+                        ctx.lineWidth = 6;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 40 + 0.05);
+                        ctx.beginPath();
+                        ctx.moveTo(effect.x, effect.y);
+                        ctx.lineTo(effect.x + Math.cos(effect.angle) * effect.length, effect.y + Math.sin(effect.angle) * effect.length);
+                        ctx.stroke();
+                        break;
+
+                    // === Additional polished visuals for mythical fruits ===
+                    case 'kirinChargeTrail':
+                        // glowing hoof-steps along the charge path
+                        ctx.fillStyle = effect.color || 'rgba(255,209,240,0.18)';
+                        ctx.shadowColor = effect.color || '#ffd1f0';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 30 + 0.05);
+                        ctx.beginPath();
+                        ctx.ellipse(effect.x, effect.y, effect.radius || 10, (effect.radius || 10) * 0.6, effect.angle || 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'skyStreak':
+                        // streak from sky for griffin dive
+                        ctx.strokeStyle = effect.color || 'rgba(255,210,140,0.9)';
+                        ctx.lineWidth = Math.max(2, effect.width || 6);
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.1);
+                        ctx.shadowColor = effect.color || '#ffd27f';
+                        ctx.shadowBlur = 24;
+                        ctx.beginPath();
+                        ctx.moveTo(effect.sx, effect.sy);
+                        ctx.lineTo(effect.x, effect.y);
+                        ctx.stroke();
+                        break;
+
+                    case 'bladeSlash':
+                        // circular blade slash visuals from Garuda
+                        ctx.fillStyle = effect.color || 'rgba(200,240,255,0.14)';
+                        ctx.shadowColor = effect.color || '#bfe8ff';
+                        ctx.shadowBlur = 18;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 28 + 0.05);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 28 + 0.2), 0, Math.PI * 2);
+                        ctx.fill();
+                        // slicing arcs
+                        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+                        ctx.lineWidth = 3;
+                        for (let i=0;i<4;i++) {
+                            const a = (i/4)*Math.PI*2 + effect.life*0.08;
+                            ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (0.35 + i*0.12), a, a+0.9); ctx.stroke();
+                        }
+                        break;
+
+                    case 'swordChain':
+                        // Thin glowing chain between two points for sword deity chaining
+                        ctx.save();
+                        ctx.strokeStyle = effect.color || 'rgba(200,230,255,0.95)';
+                        ctx.lineWidth = 2 + (effect.life/18);
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 20 + 0.05);
+                        ctx.shadowColor = effect.color || '#bfe8ff';
+                        ctx.shadowBlur = 14;
+                        ctx.beginPath();
+                        ctx.moveTo(effect.sx, effect.sy);
+                        ctx.lineTo(effect.ex, effect.ey);
+                        ctx.stroke();
+                        // small sparkle at midpoint
+                        const mx = (effect.sx + effect.ex) / 2; const my = (effect.sy + effect.ey) / 2;
+                        ctx.fillStyle = effect.color || '#bfe8ff';
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 12);
+                        ctx.beginPath(); ctx.arc(mx, my, 4 * (effect.life/18), 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'howlWave':
+                        // Fenrir howl shockwave (dark ripple)
+                        ctx.fillStyle = 'rgba(90,20,30,0.16)';
+                        ctx.shadowColor = 'rgba(90,20,30,0.9)';
+                        ctx.shadowBlur = 28;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 40 + 0.05);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.2), 0, Math.PI*2);
+                        ctx.fill();
+                        // jagged teeth outline
+                        ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 2;
+                        for (let i=0;i<6;i++){ const a=(i/6)*Math.PI*2 + effect.life*0.06; ctx.beginPath(); ctx.moveTo(effect.x + Math.cos(a)*(effect.radius*0.6), effect.y + Math.sin(a)*(effect.radius*0.6)); ctx.lineTo(effect.x + Math.cos(a)*(effect.radius*0.95), effect.y + Math.sin(a)*(effect.radius*0.95)); ctx.stroke(); }
+                        break;
+
+                    case 'dreamShimmer':
+                        // Baku dream-eater shimmer + cleansing glow
+                        ctx.fillStyle = effect.color || 'rgba(180,230,255,0.12)';
+                        ctx.shadowColor = effect.color || '#b4f0ff';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 40 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.3), 0, Math.PI*2); ctx.fill();
+                        // small twinkles
+                        for (let i=0;i<6;i++) { const a=(i/6)*Math.PI*2 + effect.life*0.12; ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(effect.x + Math.cos(a)*(effect.radius*0.6), effect.y + Math.sin(a)*(effect.radius*0.6), 3, 0, Math.PI*2); ctx.fill(); }
+                        break;
+
+                    case 'tidalFoam':
+                        // Azure Dragon step wave foam
+                        ctx.fillStyle = effect.color || 'rgba(170,220,255,0.16)';
+                        ctx.shadowColor = effect.color || '#9fd6ff';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 30 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.2), 0, Math.PI*2); ctx.fill();
+                        // splashes
+                        for (let i=0;i<6;i++) { const a=(i/6)*Math.PI*2 + effect.life*0.06; ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(effect.x + Math.cos(a)*(effect.radius*0.6), effect.y + Math.sin(a)*(effect.radius*0.6), 2 + (effect.life/30), 0, Math.PI*2); ctx.fill(); }
+                        break;
+
+                    case 'tideWave':
+                        // Move forward along angle, spawn particles and interact with enemies
+                        const vx = Math.cos(effect.angle) * effect.speed;
+                        const vy = Math.sin(effect.angle) * effect.speed;
+                        effect.x += vx;
+                        effect.y += vy;
+                        effect.travelled = (effect.travelled || 0) + effect.speed;
+
+                        // spawn spray particles along the front
+                        for (let i = 0; i < 3; i++) {
+                            effects.push({ x: effect.x + (Math.random()-0.5)*20, y: effect.y + (Math.random()-0.5)*20, vx: (Math.random()-0.5)*1.2, vy: -Math.random()*1.5 - 0.5, life: 20 + Math.random()*10, radius: 2 + Math.random()*3, type: 'waterParticle' });
+                        }
+
+                        // collision with enemies: splash damage + slow
+                        enemies.forEach(enemy => {
+                            if (effect._hit && effect._hit.indexOf(enemy) !== -1) return;
+                            const d = Math.hypot(enemy.x - effect.x, enemy.y - effect.y);
+                            if (d < effect.frontRadius + (enemy.radius || 12)) {
+                                // impact
+                                try { enemy.takeDamage(computeScaledDamage(FRUITS.TIDE ? FRUITS.TIDE.damage * 1.0 : 24, this)); } catch (err) {}
+                                enemy.slowed = Math.max(enemy.slowed || 0, 60);
+                                // slight knockback
+                                const ka = Math.atan2(enemy.y - effect.y, enemy.x - effect.x);
+                                enemy.x += Math.cos(ka) * 18;
+                                enemy.y += Math.sin(ka) * 18;
+
+                                // spawn splash effect
+                                effects.push({ x: enemy.x, y: enemy.y, radius: effect.frontRadius * 0.6, life: 36, type: 'watersplash' });
+                                // mark as hit so same enemy isn't repeatedly damaged by same wave
+                                effect._hit = effect._hit || [];
+                                effect._hit.push(enemy);
+                            }
+                        });
+
+                        // draw the curved wave front
+                        ctx.fillStyle = 'rgba(120,200,255,0.18)';
+                        ctx.shadowColor = 'rgba(120,200,255,0.9)'; ctx.shadowBlur = 20;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (effect.maxLife || 60) + 0.05);
+                        ctx.beginPath();
+                        // arc centered slightly behind the front for a moving crest look
+                        const cx = effect.x - Math.cos(effect.angle) * (effect.frontRadius * 0.4);
+                        const cy = effect.y - Math.sin(effect.angle) * (effect.frontRadius * 0.4);
+                        ctx.arc(cx, cy, effect.frontRadius * 1.2, effect.angle - Math.PI*0.6, effect.angle + Math.PI*0.6);
+                        ctx.lineTo(effect.x + Math.cos(effect.angle + Math.PI*0.6) * 6, effect.y + Math.sin(effect.angle + Math.PI*0.6) * 6);
+                        ctx.fill();
+
+                        // foam crest highlight
+                        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (effect.maxLife || 60) + 0.02);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.frontRadius * 0.35, 0, Math.PI*2);
+                        ctx.fill();
+
+                        // end the wave when travelled enough
+                        if ((effect.travelled || 0) >= effect.maxTravel) {
+                            // big final splash
+                            effects.push({ x: effect.x, y: effect.y, radius: effect.frontRadius * 1.6, life: 48, type: 'watersplash' });
+                            effect.life = 0; // will be removed after draw loop
+                        }
+                        break;
+
+                    case 'magnetField':
+                        // Magnetic pull: pulls enemies toward center, then explodes when life ends
+                        // Visual: pulsing ring + magnetic sparks
+                        const mfProg = 1 - (effect.life / effect.maxLife);
+                        // subtle inner core
+                        ctx.save();
+                        ctx.fillStyle = 'rgba(220,160,160,0.06)';
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (0.6 + mfProg * 0.2), 0, Math.PI*2); ctx.fill();
+                        // pulsing ring
+                        ctx.strokeStyle = 'rgba(196,80,80,0.9)';
+                        ctx.lineWidth = 4;
+                        ctx.globalAlpha = Math.max(0.12, (effect.life / effect.maxLife));
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (0.9 + Math.sin(Date.now()/240+mfProg)*0.02), 0, Math.PI*2); ctx.stroke();
+
+                        // magnetic sparks
+                        for (let i=0;i<8;i++) {
+                            const a = (i/8)*Math.PI*2 + mfProg*0.6;
+                            const r = effect.radius * (0.5 + Math.sin(mfProg*4 + i)*0.03);
+                            ctx.fillStyle = 'rgba(255,180,160,0.08)';
+                            ctx.beginPath(); ctx.arc(effect.x + Math.cos(a)*r, effect.y + Math.sin(a)*r, 3, 0, Math.PI*2); ctx.fill();
+                        }
+                        ctx.restore();
+
+                        // pull enemies inward
+                        enemies.forEach(enemy => {
+                            const dx = effect.x - enemy.x;
+                            const dy = effect.y - enemy.y;
+                            const d = Math.hypot(dx, dy);
+                            if (d < effect.radius + (enemy.radius || 12)) {
+                                // pull factor increases as they get closer
+                                const pullBase = 5.2; // tuning: stronger pull
+                                const pullFactor = (1 - Math.min(1, d / Math.max(1, effect.radius)));
+                                const applied = pullBase * pullFactor;
+                                if (d > 0.001) {
+                                    enemy.vx = (enemy.vx || 0) + (dx / d) * applied;
+                                    enemy.vy = (enemy.vy || 0) + (dy / d) * applied;
+                                }
+                                // small magnetized visual on enemy
+                                if (Math.random() < 0.06) effects.push({ x: enemy.x + (Math.random()-0.5)*8, y: enemy.y + (Math.random()-0.5)*8, radius: 6, life: 20, type: 'impact', color: '#ffb3b3' });
+                            }
+                        });
+
+                        // when field ends, explode
+                        if (effect.life <= 0) {
+                            const ex = effect.x, ey = effect.y;
+                            const blastR = Math.max(200, effect.radius * 1.1);
+                            // explosion visual
+                            effects.push({ x: ex, y: ey, radius: blastR, life: 36, type: 'meteorImpact', color: '#ff9999' });
+
+                            // apply damage and knockback to enemies in blast radius
+                            enemies.forEach(enemy => {
+                                const dd = Math.hypot(enemy.x - ex, enemy.y - ey);
+                                if (dd < blastR) {
+                                    try { enemy.takeDamage(computeScaledDamage(FRUITS.MAGNETION.damage, effect.owner)); } catch (err) {}
+                                    const nx = (enemy.x - ex) / Math.max(1, dd);
+                                    const ny = (enemy.y - ey) / Math.max(1, dd);
+                                    const push = 220 + Math.random() * 160;
+                                    enemy.x += nx * push; enemy.y += ny * push;
+                                    enemy.vx = (enemy.vx || 0) + nx * 14; enemy.vy = (enemy.vy || 0) + ny * 10;
+                                }
+                            });
+                        }
+
+                        break;
+
+                    case 'amaterasuField':
+                        // Black flames on the ground: immobilize + stacking bleed
+                        // draw dark burning pool with scrolling embers
+                        ctx.save();
+                        const afProg = 1 - (effect.life / effect.maxLife);
+                        // dark core
+                        ctx.fillStyle = 'rgba(48,8,8,0.9)';
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (0.95 - afProg * 0.12), 0, Math.PI*2); ctx.fill();
+                        // smoky outer glow
+                        ctx.fillStyle = 'rgba(120,20,20,0.36)'; ctx.shadowColor = 'rgba(220,80,40,0.9)'; ctx.shadowBlur = 30;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / effect.maxLife + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 + afProg * 0.08), 0, Math.PI*2); ctx.fill();
+
+                        // small ember puffs
+                        for (let i=0;i<6;i++) {
+                            const a = (i/6) * Math.PI*2 + afProg * 1.2;
+                            const r = effect.radius * (0.5 + Math.sin(afProg*6 + i) * 0.06);
+                            ctx.fillStyle = 'rgba(255,80,40,0.6)'; ctx.beginPath(); ctx.arc(effect.x + Math.cos(a)*r, effect.y + Math.sin(a)*r - afProg*8, 3 + Math.random()*3, 0, Math.PI*2); ctx.fill();
+                        }
+                        ctx.restore();
+
+                        // Apply logic: mark enemies inside with hellburn and stacking
+                        const baseDmg = FRUITS.HELLGOD ? FRUITS.HELLGOD.damage : 150;
+                        enemies.forEach(enemy => {
+                            const d = Math.hypot(enemy.x - effect.x, enemy.y - effect.y);
+                            if (d < effect.radius + (enemy.radius || 12)) {
+                                // apply or refresh hellburn for 5 seconds
+                                enemy.hellburn = Math.max(enemy.hellburn || 0, 60 * 5);
+                                enemy.hellOwner = effect.owner || enemy.hellOwner;
+                                // ensure stacks tracking map on effect
+                                effect._stackMap = effect._stackMap || new Map();
+                                if (!effect._stackMap.has(enemy)) effect._stackMap.set(enemy, { tick: 0, stacks: 0 });
+                                // spawn occasional black flame visual on enemy
+                                if (Math.random() < 0.08) effects.push({ x: enemy.x + (Math.random()-0.5)*8, y: enemy.y + (Math.random()-0.5)*8, radius: 8 + Math.random()*6, life: 36, type: 'lavaburn' });
+                            }
+                        });
+                        break;
+
+                    case 'reapMark':
+                        // floating purple reap mark above enemy
+                        ctx.fillStyle = effect.color || 'rgba(138,60,255,0.9)';
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 120 + 0.1);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y - 6, 8 + Math.sin(Date.now()/240) * 2, 0, Math.PI*2); ctx.fill();
+                        // small drifting mist
+                        ctx.fillStyle = 'rgba(110,60,160,0.12)';
+                        ctx.beginPath(); ctx.arc(effect.x + Math.cos(Date.now()/320)*8, effect.y + Math.sin(Date.now()/320)*6, 18, 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'voidSwoosh':
+                        // big purple swoosh area used for initial sickle visuals
+                        ctx.save();
+                        ctx.fillStyle = effect.color || 'rgba(90,0,170,0.18)';
+                        ctx.shadowColor = '#6a20ff'; ctx.shadowBlur = 28;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 40 + 0.05);
+                        ctx.beginPath(); ctx.ellipse(effect.x, effect.y, effect.radius, effect.radius * 0.6, 0, 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'voidExplosion':
+                        // exploding void burst for reap detonation
+                        ctx.save();
+                        const exProg = 1 - (effect.life / (effect.maxLife || 36));
+                        ctx.fillStyle = effect.color || 'rgba(120,40,220,0.9)';
+                        ctx.shadowColor = '#9b5bff'; ctx.shadowBlur = 40;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 36 + 0.02);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 + exProg * 0.6), 0, Math.PI*2); ctx.fill();
+                        // inner flash
+                        ctx.fillStyle = '#fff8ff'; ctx.globalAlpha = Math.max(0.12, 1 - exProg); ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(6, effect.radius * 0.25 * (1 - exProg)), 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'shadowExplosion':
+                        // dark burst for shadow orb explosion
+                        ctx.save();
+                        const sp = 1 - (effect.life / (effect.maxLife || 28));
+                        ctx.fillStyle = effect.color || 'rgba(60,30,90,0.9)';
+                        ctx.shadowColor = effect.color || '#6b3cff'; ctx.shadowBlur = 36;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 28 + 0.02);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 + sp * 0.8), 0, Math.PI*2); ctx.fill();
+                        // inner pulse
+                        ctx.fillStyle = '#fff8ff'; ctx.globalAlpha = Math.max(0.08, 1 - sp); ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(6, effect.radius * 0.22 * (1 - sp)), 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'tsunamiWave':
+                        // Tsunami: larger sweeping wave with continuous drag, DoT while inside, and final heavy knockback
+                        const tvx = Math.cos(effect.angle) * effect.speed;
+                        const tvy = Math.sin(effect.angle) * effect.speed;
+                        effect.x += tvx;
+                        effect.y += tvy;
+                        effect.travelled = (effect.travelled || 0) + effect.speed;
+
+                        // spawn foamy spray and big particles for cinematic look
+                        for (let i = 0; i < 4; i++) {
+                            effects.push({ x: effect.x + (Math.random()-0.5)*40, y: effect.y + (Math.random()-0.5)*40, vx: (Math.random()-0.5)*2, vy: -Math.random()*2 - 0.5, life: 30 + Math.random()*20, radius: 3 + Math.random()*4, type: 'waterParticle' });
+                        }
+
+                        // damage-over-time base per tick (will be scaled by owner level)
+                        const dotBase = Math.max(2, Math.floor((FRUITS.SEA_KING && FRUITS.SEA_KING.damage ? FRUITS.SEA_KING.damage : 120) * 0.06));
+
+                        // interact continuously with enemies inside the front radius
+                        enemies.forEach(enemy => {
+                            const dx = effect.x - enemy.x;
+                            const dy = effect.y - enemy.y;
+                            const d = Math.hypot(dx, dy);
+                            const hitRadius = effect.frontRadius * 1.05 + (enemy.radius || 12);
+                            if (d < hitRadius) {
+                                // Strong suction toward the wave's center (pull inward)
+                                const pullStrength = 1.8; // tuning: higher = stronger suck
+                                const pullFactor = 1 - Math.min(1, d / Math.max(1, effect.frontRadius));
+                                if (d > 0.001) {
+                                    // If not yet tethered, establish a visible thread (benang) connecting enemy to this wave
+                                    if (!enemy.tsunamiTether || enemy.tsunamiTether.wave !== effect) {
+                                        // attach tether
+                                        enemy.tsunamiTether = { wave: effect, strength: 2.8 };
+                                        effect._tethered = effect._tethered || [];
+                                        if (effect._tethered.indexOf(enemy) === -1) effect._tethered.push(enemy);
+                                        // small visual ping when tether attaches
+                                        effects.push({ x: enemy.x, y: enemy.y, radius: 10, life: 22, type: 'tidalFoam' });
+                                    }
+
+                                    // compute pull toward the moving wave center (stronger if tethered)
+                                    const tether = enemy.tsunamiTether;
+                                    const appliedPull = (tether ? tether.strength : pullStrength) * pullFactor;
+                                    enemy.vx = (enemy.vx || 0) + (dx / d) * appliedPull;
+                                    enemy.vy = (enemy.vy || 0) + (dy / d) * appliedPull;
+                                }
+
+                                // Carry along the wave direction (forward push)
+                                const carryStrength = 1.8; // tuning: how strongly the wave carries targets forward
+                                const ax = Math.cos(effect.angle) * carryStrength;
+                                const ay = Math.sin(effect.angle) * carryStrength;
+                                enemy.vx += ax;
+                                enemy.vy += ay;
+                                // nudge position slightly to keep them on the crest
+                                enemy.x += ax * 1.6;
+                                enemy.y += ay * 0.9;
+
+                                // per-enemy DoT timer
+                                effect._dotMap = effect._dotMap || new Map();
+                                const last = effect._dotMap.get(enemy) || 0;
+                                if (last <= 0) {
+                                    try { enemy.takeDamage(computeScaledDamage(dotBase, effect.owner)); } catch (err) {}
+                                    effect._dotMap.set(enemy, 10); // faster ticks due to stronger wave
+                                } else {
+                                    effect._dotMap.set(enemy, last - 1);
+                                }
+
+                                // bigger continuous splash visual on enemy
+                                effects.push({ x: enemy.x + (Math.random()-0.5)*12, y: enemy.y + (Math.random()-0.5)*12, radius: 8, life: 20, type: 'watersplash' });
+                            } else {
+                                // ensure timer for enemies outside slowly decays
+                                if (effect._dotMap && effect._dotMap.has(enemy)) {
+                                    const v = effect._dotMap.get(enemy);
+                                    if (v <= 0) effect._dotMap.delete(enemy); else effect._dotMap.set(enemy, v-1);
+                                }
+                                // if enemy drifts sufficiently away, release tether
+                                if (enemy.tsunamiTether && enemy.tsunamiTether.wave === effect) {
+                                    const releaseDist = effect.frontRadius * 1.4 + (enemy.radius || 12);
+                                    if (d > releaseDist) {
+                                        try { delete enemy.tsunamiTether; } catch(e) {}
+                                        if (effect._tethered) {
+                                            const i = effect._tethered.indexOf(enemy);
+                                            if (i !== -1) effect._tethered.splice(i, 1);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+
+                        // draw the sweeping, translucent tsunami body (curved crest)
+                        ctx.save();
+                        // soft blue body
+                        ctx.fillStyle = 'rgba(70,160,230,0.18)';
+                        ctx.shadowColor = 'rgba(110,200,255,0.9)'; ctx.shadowBlur = 36;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / (effect.maxLife || 60) + 0.06);
+                        ctx.beginPath();
+                        const tcx = effect.x - Math.cos(effect.angle) * (effect.frontRadius * 0.6);
+                        const tcy = effect.y - Math.sin(effect.angle) * (effect.frontRadius * 0.6);
+                        ctx.arc(tcx, tcy, effect.frontRadius * 2.0, effect.angle - Math.PI*0.55, effect.angle + Math.PI*0.55);
+                        ctx.lineTo(effect.x + Math.cos(effect.angle + Math.PI*0.55) * 12, effect.y + Math.sin(effect.angle + Math.PI*0.55) * 12);
+                        ctx.fill();
+
+                        // frothy crest highlight
+                        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (effect.maxLife || 60) + 0.02);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.frontRadius * 0.48, 0, Math.PI*2); ctx.fill();
+
+                        // delicate corona lines for visual elegance
+                        ctx.strokeStyle = 'rgba(200,245,255,0.18)'; ctx.lineWidth = 2;
+                        for (let i=0;i<6;i++) {
+                            ctx.beginPath();
+                            const a = effect.angle + (i-3)*0.08 + effect.travelled*0.002;
+                            ctx.moveTo(effect.x - Math.cos(a)* (effect.frontRadius*0.25), effect.y - Math.sin(a)*(effect.frontRadius*0.25));
+                            ctx.lineTo(effect.x + Math.cos(a)* (effect.frontRadius*1.05), effect.y + Math.sin(a)*(effect.frontRadius*1.05));
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+
+                        // draw tethers (benang) from wave center to tethered enemies
+                        if (effect._tethered && effect._tethered.length) {
+                            ctx.save();
+                            ctx.lineWidth = 3;
+                            ctx.strokeStyle = 'rgba(180,235,255,0.7)';
+                            ctx.shadowColor = 'rgba(120,200,255,0.9)'; ctx.shadowBlur = 14;
+                            effect._tethered.forEach(tbEnemy => {
+                                if (!tbEnemy || !tbEnemy.tsunamiTether || tbEnemy.tsunamiTether.wave !== effect) return;
+                                // soften the alpha based on remaining wave life
+                                ctx.globalAlpha = Math.max(0.12, (effect.life / effect.maxLife) * 0.85);
+                                ctx.beginPath();
+                                ctx.moveTo(effect.x, effect.y);
+                                // add a slight sine wobble to the rope for motion
+                                const midx = (effect.x + tbEnemy.x) * 0.5 + Math.sin((Date.now()/120) + tbEnemy.x) * 6;
+                                const midy = (effect.y + tbEnemy.y) * 0.5 + Math.cos((Date.now()/120) + tbEnemy.y) * 6;
+                                ctx.quadraticCurveTo(midx, midy, tbEnemy.x, tbEnemy.y);
+                                ctx.stroke();
+                            });
+                            ctx.restore();
+                        }
+
+                        // when the tsunami reaches its max travel, do the big throw and damage
+                        if ((effect.travelled || 0) >= effect.maxTravel) {
+                            // big final splash + blast that throws enemies backwards
+                            const sx = effect.x, sy = effect.y;
+                            effects.push({ x: sx, y: sy, radius: effect.frontRadius * 2.2, life: 60, type: 'watersplash' });
+
+                            enemies.forEach(enemy => {
+                                const d = Math.hypot(enemy.x - sx, enemy.y - sy);
+                                if (d < effect.frontRadius * 2.2) {
+                                    // final damage scaled to owner level
+                                    try { enemy.takeDamage(computeScaledDamage(FRUITS.SEA_KING.damage, effect.owner)); } catch (err) {}
+                                    // heavy throw away from wave center
+                                    const nx = (enemy.x - sx) / Math.max(1, d);
+                                    const ny = (enemy.y - sy) / Math.max(1, d);
+                                    const push = 240 + Math.random() * 180;
+                                    enemy.x += nx * push; enemy.y += ny * push;
+                                    enemy.vx = (enemy.vx || 0) + nx * 16; enemy.vy = (enemy.vy || 0) + ny * 12;
+                                }
+                            });
+
+                            // release and clean up any tethers attached to this wave
+                            if (effect._tethered && effect._tethered.length) {
+                                effect._tethered.forEach(te => {
+                                    try { if (te && te.tsunamiTether && te.tsunamiTether.wave === effect) delete te.tsunamiTether; } catch(e) {}
+                                });
+                                effect._tethered.length = 0;
+                            }
+                            effect.life = 0;
+                        }
+                        break;
+
+                    case 'waterParticle':
+                        // particles arcing upward and falling
+                        effect.vy = (typeof effect.vy === 'number') ? effect.vy + 0.12 : 0.12;
+                        effect.x += effect.vx || 0;
+                        effect.y += effect.vy || 0;
+                        ctx.fillStyle = 'rgba(180,220,255,0.9)';
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.1);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(1, effect.radius || 2), 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'watersplash':
+                        // radial splash ring + droplets (clamped radii to avoid negative arc radius)
+                        ctx.strokeStyle = 'rgba(200,235,255,0.85)'; ctx.lineWidth = 3;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 36 + 0.02);
+                        // compute a safe display radius
+                        const _wsRaw = effect.radius * (1 - effect.life / 36 + 0.1);
+                        const _wsRadius = Math.max(0.5, _wsRaw);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, _wsRadius, 0, Math.PI*2); ctx.stroke();
+                        // droplets (positioned relative to absolute positive radius to avoid weird placement)
+                        const dropletBase = Math.max(4, Math.abs(effect.radius) * 0.6);
+                        for (let i=0;i<6;i++) {
+                            const a=(i/6)*Math.PI*2 + effect.life*0.08;
+                            ctx.fillStyle='rgba(220,245,255,0.9)';
+                            ctx.beginPath();
+                            ctx.arc(effect.x + Math.cos(a)*(dropletBase), effect.y + Math.sin(a)*(dropletBase), Math.max(1, 2 + (effect.life/36)), 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                        break;
+                        
+                    case 'rubberstretch':
+                        if (effect.delay > 0) {
+                            effect.delay--;
+                            break;
+                        }
+                        
+                        ctx.fillStyle = effect.color;
+                        ctx.globalAlpha = effect.life / 25;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Stretching animation
+                        effect.radius *= 1.02;
+                        break;
+                        
+                    case 'rubberimpact':
+                        ctx.fillStyle = effect.color;
+                        ctx.shadowColor = effect.color;
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = effect.life / 30;
+                        
+                        // Pulsing effect
+                        const pulseRadius = effect.radius + Math.sin(effect.life * 0.5) * 10;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, pulseRadius, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'bounce':
+                        ctx.strokeStyle = '#FF44FF';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = effect.life / 15;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        
+                        effect.radius += 2;
+                        break;
+                        
+                    case 'lightningbolt':
+                        ctx.strokeStyle = '#FFFF00';
+                        ctx.shadowColor = '#FFFF00';
+                        ctx.shadowBlur = 15;
+                        ctx.lineWidth = 4;
+                        ctx.globalAlpha = effect.life / 20;
+                        
+                        ctx.beginPath();
+                        for (let i = 0; i < effect.segments.length - 1; i++) {
+                            const current = effect.segments[i];
+                            const next = effect.segments[i + 1];
+                            
+                            if (i === 0) ctx.moveTo(current.x, current.y);
+                            ctx.lineTo(next.x, next.y);
+                        }
+                        ctx.stroke();
+                        
+                        // Secondary thinner bolt
+                        ctx.lineWidth = 2;
+                        ctx.globalAlpha = (effect.life / 20) * 0.6;
+                        ctx.stroke();
+                        break;
+                        
+                    case 'lightninghit':
+                        ctx.fillStyle = '#FFFF00';
+                        ctx.shadowColor = '#FFFF00';
+                        ctx.shadowBlur = 25;
+                        ctx.globalAlpha = effect.life / 15;
+                        
+                        // Electric sparks
+                        for (let i = 0; i < 6; i++) {
+                            const sparkAngle = (i / 6) * Math.PI * 2;
+                            const sparkDist = effect.radius + Math.random() * 15;
+                            ctx.beginPath();
+                            ctx.arc(
+                                effect.x + Math.cos(sparkAngle) * sparkDist,
+                                effect.y + Math.sin(sparkAngle) * sparkDist,
+                                3, 0, Math.PI * 2
+                            );
+                            ctx.fill();
+                        }
+                        break;
+
+                    case 'prismBeamLine':
+                        // Draw a short-lived glowing beam from player to snapshot target coords (hitscan)
+                        // Prefer stored tx/ty (snapshot) when present; otherwise support live target reference
+                        let _tx = effect.tx;
+                        let _ty = effect.ty;
+                        if (_tx === undefined || _ty === undefined) {
+                            if (effect.target) { _tx = effect.target.x; _ty = effect.target.y; }
+                        }
+                        if (_tx === undefined || _ty === undefined) break;
+
+                        ctx.strokeStyle = effect.color || '#ffffff';
+                        ctx.lineWidth = 12;
+                        ctx.globalAlpha = Math.min(1, effect.life / 18);
+                        ctx.shadowColor = effect.color || '#fff';
+                        ctx.shadowBlur = 28;
+                        ctx.beginPath();
+                        ctx.moveTo(effect.sx, effect.sy);
+                        ctx.lineTo(_tx, _ty);
+                        ctx.stroke();
+
+                        // inner brighter core
+                        ctx.strokeStyle = '#ffffff';
+                        ctx.lineWidth = 4;
+                        ctx.globalAlpha = Math.min(1, effect.life / 12);
+                        ctx.beginPath();
+                        ctx.moveTo(effect.sx, effect.sy);
+                        ctx.lineTo(_tx, _ty);
+                        ctx.stroke();
+                        break;
+
+                    case 'prismimpact':
+                        ctx.fillStyle = effect.color || '#ffffff';
+                        ctx.shadowColor = effect.color || '#ffffff';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = Math.min(1, effect.life / 20);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 20 + 0.2), 0, Math.PI * 2);
+                        ctx.fill();
+                        // burst particles
+                        for (let i = 0; i < 6; i++) {
+                            const a = (i / 6) * Math.PI * 2 + Math.random() * 0.6;
+                            const r = effect.radius * (0.5 + Math.random() * 0.8) * (1 - effect.life / 20 + 0.1);
+                            ctx.globalAlpha = Math.min(1, effect.life / 20) * 0.9;
+                            ctx.beginPath();
+                            ctx.arc(effect.x + Math.cos(a) * r, effect.y + Math.sin(a) * r, 3, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        break;
+
+                    /* cardOrbit/cardTrail/cardImpact removed along with CARD fruit */
+
+                    case 'slotMachine':
+                        // Animated slot machine above owner
+                        if (!effect.owner) break;
+                        const smOwner = effect.owner;
+                        const smx = smOwner.x;
+                        const smy = smOwner.y - 120;
+                        // machine body
+                        ctx.save();
+                        ctx.translate(smx, smy);
+                        ctx.shadowBlur = 30; ctx.shadowColor = effect.color || '#ffdd66';
+                        ctx.fillStyle = 'rgba(30,30,40,0.9)'; ctx.beginPath(); ctx.roundRect(-72, -40, 144, 80, 8); ctx.fill();
+                        // three reels
+                        for (let r = -1; r <= 1; r++) {
+                            ctx.fillStyle = '#111'; ctx.fillRect(r * 44 - 26, -26, 52, 52);
+                            // spinning hint (randomized by time)
+                            const sym = ['7','🍒','💀','🍒','X'][Math.floor((Date.now()/80 + r*5) % 5)];
+                            ctx.font = '22px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                            ctx.fillStyle = '#fff'; ctx.fillText(sym, r * 44 + 0, 0);
+                        }
+                        // neon label
+                        ctx.fillStyle = '#ffcc66'; ctx.font = '14px serif'; ctx.fillText('777 FEVER', 0, -52);
+                        ctx.restore();
+                        break;
+
+                    case 'slotResult':
+                        // Show resolved reels near owner
+                        if (!effect.owner) break;
+                        const rrOwner = effect.owner;
+                        const rrx = rrOwner.x; const rry = rrOwner.y - 120;
+                        ctx.save(); ctx.translate(rrx, rry);
+                        // background
+                        ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.beginPath(); ctx.roundRect(-70, -28, 140, 56, 6); ctx.fill();
+                        // draw reels
+                        const reels = effect.reels || ['?','?','?'];
+                        for (let i=0; i<3; i++) { ctx.font = '22px serif'; ctx.fillStyle = '#fff'; ctx.textAlign='center'; ctx.fillText(reels[i]||'?', -40 + i*40, 0); }
+                        ctx.restore();
+                        break;
+
+                    case 'jackpotCoinBurst':
+                        ctx.save();
+                        ctx.fillStyle = effect.color || '#FFD700'; ctx.shadowColor = effect.color || '#FFD700'; ctx.shadowBlur = 40;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 48 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 48 + 0.2), 0, Math.PI*2); ctx.fill();
+                        // sparkles
+                        for (let i=0;i<14;i++){ const a=(i/14)*Math.PI*2 + Math.random()*0.6; ctx.beginPath(); ctx.arc(effect.x + Math.cos(a)*(effect.radius*0.6), effect.y + Math.sin(a)*(effect.radius*0.6), 3 + Math.random()*5, 0, Math.PI*2); ctx.fill(); }
+                        ctx.restore();
+                        break;
+
+                    case 'potionRain':
+                        ctx.save();
+                        ctx.fillStyle = effect.color || '#FF69B4'; ctx.shadowColor = effect.color || '#FF69B4'; ctx.shadowBlur = 26;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 120 + 0.05);
+                        // falling potion sprites
+                        for (let i=0;i<12;i++) { const px = effect.x + (i-6) * 28 + Math.sin((Date.now()/220 + i)*0.6)*8; const py = effect.y + ( (120 - effect.life) * 1.5) + (i%3)*10; ctx.beginPath(); ctx.roundRect(px-6, py-6, 12, 12, 3); ctx.fill(); }
+                        ctx.restore();
+                        break;
+
+                    case 'fruitRain':
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 140 + 0.05);
+                        const fcount = 10;
+                        for (let i=0;i<fcount;i++) {
+                            const t = Date.now()/240 + i * 0.3;
+                            const px = effect.x + (i - fcount/2) * 36 + Math.sin(t) * 12;
+                            const py = effect.y + ((140 - effect.life) * 1.6) + (i%4)*8;
+                            // pick a pleasant color per index
+                            const cols = ['#ff6666','#ffcc66','#66cc66','#66ccff','#cc88ff'];
+                            ctx.fillStyle = effect.color || cols[i % cols.length];
+                            ctx.beginPath(); ctx.arc(px, py, 10, 0, Math.PI*2); ctx.fill();
+                            // small highlight
+                            ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(px-3, py-3, 3, 0, Math.PI*2); ctx.fill();
+                        }
+                        ctx.restore();
+                        break;
+
+                    case 'blackNuke':
+                        ctx.save();
+                        ctx.fillStyle = effect.color || 'rgba(20,6,12,0.95)'; ctx.shadowColor = '#220022'; ctx.shadowBlur = 60;
+                        const jbProg = 1 - (effect.life / 80);
+                        ctx.globalAlpha = Math.max(0.06, 0.95 * (1 - jbProg));
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * jbProg, 0, Math.PI*2); ctx.fill();
+                        // inner core
+                        ctx.fillStyle = '#000000'; ctx.globalAlpha = Math.min(0.9, effect.life / 24 + 0.02); ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(6, effect.radius * 0.12 * (1 + jbProg)), 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'slotFizzle':
+                        ctx.save();
+                        ctx.fillStyle = 'rgba(200,200,200,0.18)'; ctx.beginPath(); ctx.arc(effect.x, effect.y, 28, 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'mechaImpact':
+                        ctx.save();
+                        ctx.fillStyle = effect.color || '#99aaff';
+                        ctx.shadowColor = effect.color || '#99aaff'; ctx.shadowBlur = 26;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 30 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.2), 0, Math.PI*2); ctx.fill();
+                        // radial sparks
+                        for (let i=0;i<8;i++) { const a=(i/8)*Math.PI*2 + Math.random()*0.4; ctx.beginPath(); ctx.arc(effect.x + Math.cos(a)* (effect.radius*0.6), effect.y + Math.sin(a)*(effect.radius*0.6), 2 + Math.random()*3, 0, Math.PI*2); ctx.fill(); }
+                        ctx.restore();
+                        break;
+
+                    case 'elysiumField':
+                        // Large soft glowing dome that stuns enemies inside
+                        ctx.fillStyle = 'rgba(255, 248, 214, 0.08)';
+                        ctx.shadowColor = '#fff8d6'; ctx.shadowBlur = 40;
+                        ctx.globalAlpha = Math.min(0.9, effect.life /  (60*5) + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI*2); ctx.fill();
+                        // faint grid of light
+                        ctx.strokeStyle = 'rgba(255, 245, 200, 0.06)'; ctx.lineWidth = 1;
+                        for (let g=0; g<8; g++) { const a = (g/8)*Math.PI*2; const gx = effect.x + Math.cos(a) * (effect.radius*0.6); const gy = effect.y + Math.sin(a) * (effect.radius*0.6); ctx.beginPath(); ctx.moveTo(effect.x, effect.y); ctx.lineTo(gx, gy); ctx.stroke(); }
+                        break;
+
+                    case 'elysiumBeam':
+                        // vertical falling beam from sky to target point
+                        ctx.strokeStyle = effect.color || '#fff8d6'; ctx.lineWidth = 6;
+                        ctx.shadowColor = '#fff8d6'; ctx.shadowBlur = 28;
+                        ctx.globalAlpha = Math.min(1, effect.life / 36 + 0.05);
+                        ctx.beginPath(); ctx.moveTo(effect.sx, effect.sy); ctx.lineTo(effect.x, effect.y); ctx.stroke();
+                        // bright core
+                        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(effect.x, effect.y, 6, 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'elysiumChain':
+                        // glowing chain from source (player) to target (enemy)
+                        const csx = (effect.source && effect.source.x) ? effect.source.x : (effect.sx || 0);
+                        const csy = (effect.source && effect.source.y) ? (effect.source.y) : (effect.sy || 0);
+                        const ctxx = (effect.target && effect.target.x) ? effect.target.x : (effect.tx || 0);
+                        const cty = (effect.target && effect.target.y) ? effect.target.y : (effect.ty || 0);
+                        ctx.strokeStyle = effect.color || 'rgba(255,248,214,0.95)'; ctx.lineWidth = 3;
+                        ctx.shadowColor = '#fff8d6'; ctx.shadowBlur = 22;
+                        ctx.globalAlpha = Math.min(1, effect.life / 60 + 0.1);
+                        ctx.beginPath(); ctx.moveTo(csx, csy); ctx.lineTo(ctxx, cty); ctx.stroke();
+                        // small spark at target
+                        ctx.fillStyle = '#fff8d6'; ctx.beginPath(); ctx.arc(ctxx, cty, 4, 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'elysiumHalo':
+                        // spinning orb around player
+                        const owner = effect.owner;
+                        if (!owner) break;
+                        effect.angle = (effect.angle || 0) + 0.6;
+                        const r = 64;
+                        for (let i=0;i<6;i++) {
+                            const a = effect.angle + (i/6)*Math.PI*2;
+                            const px = owner.x + Math.cos(a) * r;
+                            const py = owner.y + Math.sin(a) * r;
+                            ctx.fillStyle = 'rgba(255,250,230,0.9)'; ctx.beginPath(); ctx.arc(px, py, 6, 0, Math.PI*2); ctx.fill();
+                        }
+                        break;
+
+                    case 'elysiumPulse':
+                        ctx.fillStyle = 'rgba(255,250,230,0.9)';
+                        ctx.shadowColor = '#fff8d6'; ctx.shadowBlur = 36;
+                        ctx.globalAlpha = Math.min(1, effect.life / 18 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 18 + 0.1), 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'elysiumImplode':
+                        ctx.fillStyle = 'rgba(255,240,200,0.95)';
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 18), 0, Math.PI*2); ctx.fill();
+                        // quick disappearance
+                        break;
+
+                    case 'seraphimpact':
+                        ctx.fillStyle = '#fff9c8'; ctx.shadowColor = '#fff8d6'; ctx.shadowBlur = 20; ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius || 12, 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'seraphheal':
+                        ctx.fillStyle = 'rgba(255,245,220,0.12)'; ctx.shadowColor = '#fff0d0'; ctx.shadowBlur = 26; ctx.globalAlpha = Math.min(0.9, effect.life / 40 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.2), 0, Math.PI*2); ctx.fill();
+                        break;
+
+                    case 'marionetteString':
+                        // thin black string from source (player) to target with pulsing nodes
+                        const sx = (effect.source && effect.source.x) ? effect.source.x : (effect.sx || 0);
+                        const sy = (effect.source && effect.source.y) ? (effect.source.y - 8) : (effect.sy || 0);
+                        const ttx = (effect.target && effect.target.x) ? effect.target.x : (effect.tx || 0);
+                        const tty = (effect.target && effect.target.y) ? (effect.target.y - 8) : (effect.ty || 0);
+                        ctx.strokeStyle = effect.color || '#000000';
+                        ctx.lineWidth = 2;
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 60 + 0.05);
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy);
+                        // create wavy string
+                        let sdx = ttx - sx; let sdy = tty - sy; const segs = 8;
+                        for (let s=1;s<=segs;s++){
+                            const p = s/segs;
+                            const x = sx + sdx * p + Math.sin(p * Math.PI * 8 + effect.life*0.2) * 6;
+                            const y = sy + sdy * p + Math.cos(p * Math.PI * 6 + effect.life*0.15) * 4;
+                            ctx.lineTo(x, y);
+                        }
+                        ctx.stroke();
+                        // nodes along string (small black beads)
+                        for (let n=0;n<4;n++){ const p=(n+1)/5; const nx=sx + sdx*p; const ny=sy + sdy*p; ctx.fillStyle = effect.color || '#000000'; ctx.beginPath(); ctx.arc(nx + Math.sin(effect.life*0.12+n)*2, ny + Math.cos(effect.life*0.09+n)*2, 3,0,Math.PI*2); ctx.fill(); }
+                        break;
+
+                    case 'shadowOrb':
+                        // orbit around owner, seek and possess nearest enemy, then explode into chain damage
+                        const orbOwner = effect.orbitOwner || player;
+                        if (orbOwner) {
+                            // advance orbit
+                            effect.orbitAngle = (effect.orbitAngle || 0) + (effect.angularSpeed || 0.14);
+                            const orR = effect.orbitRadius || 72;
+                            effect.x = orbOwner.x + Math.cos(effect.orbitAngle) * orR;
+                            effect.y = orbOwner.y + Math.sin(effect.orbitAngle) * orR;
+                        }
+
+                        // If currently possessing a target, tick its timer and maintain thread
+                        if (effect.state === 'possessing') {
+                            if (!effect.possessed || effect.possessed.dead) {
+                                // target died earlier -> explode early
+                                effect.possessTimer = 0;
+                            }
+                            effect.possessTimer = Math.max(0, (effect.possessTimer || 0) - 1);
+                            // visual small orb + link handled by marionetteString created at possess time
+                            ctx.save();
+                            ctx.fillStyle = effect.color || '#221144';
+                            ctx.shadowColor = effect.color || '#221144'; ctx.shadowBlur = 18;
+                            ctx.globalAlpha = Math.min(0.95, effect.life / 60 + 0.05);
+                            ctx.beginPath(); ctx.arc(effect.x, effect.y, 8, 0, Math.PI*2); ctx.fill();
+                            ctx.restore();
+
+                            // when timer ends, trigger explosion chain
+                            if (effect.possessTimer <= 0 && !effect.explodeDone) {
+                                const center = effect.possessed && !effect.possessed.dead ? effect.possessed : { x: effect.x, y: effect.y };
+                                // explosion visual
+                                effects.push({ x: center.x, y: center.y, radius: 48, life: 28, type: 'shadowExplosion', color: effect.color });
+
+                                // build chain of up to 5 enemies (start from center if an enemy exists)
+                                const candidates = enemies.slice().filter(e=>!e.dead).map(e=>({ e, d: Math.hypot(e.x - center.x, e.y - center.y) })).sort((a,b)=>a.d-b.d).map(o=>o.e);
+                                const maxChain = 5;
+                                const chain = [];
+                                const used = new Set();
+                                if (effect.possessed && !effect.possessed.dead) { chain.push(effect.possessed); used.add(effect.possessed); }
+                                for (let k=0; k<candidates.length && chain.length < maxChain; k++) {
+                                    const c = candidates[k];
+                                    if (!used.has(c)) { chain.push(c); used.add(c); }
+                                }
+
+                                // Apply damage along chain and visuals
+                                for (let s=0; s<chain.length; s++) {
+                                    const tgt = chain[s];
+                                    try { tgt.takeDamage(computeScaledDamage(FRUITS.SHADOW.damage || 40, orbOwner)); } catch(e){}
+                                    tgt.stunned = Math.max(tgt.stunned || 0, 24);
+                                    effects.push({ type: 'puppetAura', x: tgt.x, y: tgt.y, radius: 18, life: 28, color: effect.color });
+                                    if (s>0) {
+                                        const prev = chain[s-1];
+                                        effects.push({ type: 'swordChain', sx: prev.x, sy: prev.y, ex: tgt.x, ey: tgt.y, life: 22, color: effect.color });
+                                    }
+                                }
+
+                                // cleanup control on possessed enemy
+                                if (effect.possessed && effect.possessed._controlledSource) {
+                                    delete effect.possessed._controlledSource;
+                                }
+
+                                effect.explodeDone = true;
+                                effect.life = 12; // let orb fade out
+                                effect.state = 'exploded';
+                            }
+                            break;
+                        }
+
+                        // If in seek state, try to find a nearest uncontrolled enemy to possess
+                        if (effect.state === 'seek') {
+                            effect._seekTick = (effect._seekTick || 6) - 1;
+                            if (effect._seekTick <= 0) {
+                                effect._seekTick = 8;
+                                let best = null; let bd = Infinity;
+                                enemies.forEach(e => {
+                                    if (!e || e.dead) return;
+                                    if (e.controlled && e.controlled > 0) return; // skip already controlled
+                                    const d = Math.hypot(e.x - effect.x, e.y - effect.y);
+                                    if (d < bd && d < 420) { bd = d; best = e; }
+                                });
+                                if (best) {
+                                    // possess this enemy for 5s
+                                    const dur = 60 * 5;
+                                    best.controlled = dur;
+                                    best._controlledSource = orbOwner;
+                                    effect.state = 'possessing';
+                                    effect.possessed = best;
+                                    effect.possessTimer = dur;
+                                    // add visual tether from player -> target
+                                    effects.push({ type: 'marionetteString', source: orbOwner, target: best, life: dur, color: effect.color });
+                                    // aura on controlled
+                                    effects.push({ type: 'puppetAura', x: best.x, y: best.y, radius: best.radius + 8, life: dur, color: effect.color });
+                                }
+                            }
+                        }
+
+                        // draw idle orb when not possessing
+                        if (effect.state === 'seek') {
+                            ctx.save();
+                            ctx.fillStyle = effect.color || '#221144';
+                            ctx.shadowColor = effect.color || '#221144'; ctx.shadowBlur = 20;
+                            ctx.globalAlpha = Math.min(0.95, effect.life / 60 + 0.05);
+                            ctx.beginPath(); ctx.arc(effect.x, effect.y, 8, 0, Math.PI*2); ctx.fill();
+                            // small inner glow
+                            ctx.fillStyle = '#000000'; ctx.globalAlpha = 0.12; ctx.beginPath(); ctx.arc(effect.x, effect.y, 14, 0, Math.PI*2); ctx.fill();
+                            ctx.restore();
+                        }
+                        break;
+
+                    case 'loveHeartField':
+                        // Draw big heart field, attach tethers to enemies inside, show bindings and icons
+                        const ownerH = effect.owner || player;
+                        // pulse scale
+                        const progH = 1 - (effect.life / effect.maxLife);
+                        // Draw a single heart emoji as the field icon
+                        ctx.save();
+                        ctx.shadowBlur = 40; ctx.shadowColor = effect.color || '#ff6b9a';
+                        ctx.fillStyle = effect.color || '#ff4466';
+                        ctx.globalAlpha = Math.min(0.98, effect.life / effect.maxLife + 0.06);
+                        const heartSize = Math.max(18, Math.floor(effect.radius * 0.9));
+                        ctx.font = `${heartSize}px serif`;
+                        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                        ctx.fillText('❤️', effect.x, effect.y);
+                        ctx.restore();
+
+                        // attach tethers to enemies that touch the heart radius
+                        enemies.forEach(en => {
+                            if (!en || en.dead) return;
+                            const d = Math.hypot(en.x - effect.x, en.y - effect.y);
+                            if (d < effect.radius) {
+                                if (!effect.tethered.has(en)) {
+                                    // bind
+                                    effect.tethered.set(en, true);
+                                    // immobilize via frozen flag and mark as controlled so puppet mechanics can reuse
+                                    en.frozen = Math.max(en.frozen || 0, 60 * 5);
+                                    en.controlled = Math.max(en.controlled || 0, 60 * 5);
+                                    en._controlledSource = ownerH;
+                                    // add love icon above head
+                                    en._loveIcon = { type: 'loveIcon', target: en, life: effect.life, color: effect.color };
+                                    effects.push(en._loveIcon);
+                                    // visual tether from player to enemy
+                                    effects.push({ type: 'marionetteString', source: ownerH, target: en, life: effect.life, color: '#ff5577' });
+                                } else {
+                                    // refresh bound duration (keep icon alive)
+                                    const icon = en._loveIcon; if (icon) icon.life = Math.max(icon.life, effect.life);
+                                }
+                            }
+                        });
+
+                        // when field ends, explode and spawn love arrows
+                        if (effect.life <= 0) {
+                            // build list of tethered enemies
+                            const bound = [];
+                            effect.tethered.forEach((v, e) => { if (e && !e.dead) bound.push(e); });
+                            if (bound.length > 0) {
+                                // explosion visual
+                                effects.push({ x: effect.x, y: effect.y, radius: effect.radius * 0.6, life: 30, type: 'meteorImpact', color: '#ff86b0' });
+                                // spawn an arrow for each bound target
+                                bound.forEach((tgt) => {
+                                    const ang = Math.atan2(tgt.y - effect.y, tgt.x - effect.x);
+                                    const arrow = new Projectile(effect.x, effect.y, ang, 12, Math.max(8, Math.floor(FRUITS.HITO_HITO_DEWI.damage)), '#ff4466', 'loveArrow', ownerH);
+                                    arrow.chainLeft = Math.max(2, Math.floor(bound.length/2));
+                                    arrow._hitTargets = new Set();
+                                    arrow._boundList = bound.slice(); // for retargeting choices
+                                    projectiles.push(arrow);
+                                });
+                            }
+                            // cleanup icons on enemies
+                            effect.tethered.forEach((v, e) => { try { if (e && e._loveIcon) { e._loveIcon.life = 0; delete e._loveIcon; } } catch(_){} });
+                        }
+                        break;
+
+                    case 'loveIcon':
+                        // small heart emoji above enemy head
+                        const targetEnemy = effect.target;
+                        if (targetEnemy && !targetEnemy.dead) {
+                            const ix = targetEnemy.x;
+                            const iy = targetEnemy.y - (targetEnemy.radius || 16) - 10;
+                            ctx.save();
+                            ctx.fillStyle = effect.color || '#ff4d77'; ctx.shadowColor = effect.color || '#ff4d77'; ctx.shadowBlur = 12;
+                            ctx.globalAlpha = Math.min(0.98, effect.life / 60 + 0.05);
+                            const size = 14;
+                            ctx.font = `${size}px serif`;
+                            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                            ctx.fillText('❤️', ix, iy);
+                            ctx.restore();
+                            // follow enemy
+                            effect.x = ix; effect.y = iy;
+                        } else {
+                            effect.life = 0;
+                        }
+                        break;
+
+                    case 'puppetAura':
+                        ctx.fillStyle = effect.color || 'rgba(199,156,110,0.12)';
+                        ctx.shadowColor = effect.color || '#c79c6e';
+                        ctx.shadowBlur = 22;
+                        // ensure we have original life to compute normalized progress
+                        if (!effect._origLife) effect._origLife = effect.life;
+                        const prog = effect._origLife > 0 ? (effect.life / effect._origLife) : 0;
+                        // Compute display radius safely and clamp to >= 0.5
+                        const displayRadius = Math.max(0.5, effect.radius * (1 - prog + 0.2));
+                        ctx.globalAlpha = Math.min(0.95, effect.life / 60 + 0.05);
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, displayRadius, 0, Math.PI*2); ctx.fill();
+                        // little puppet cross icon
+                        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                        ctx.fillRect(effect.x - 6, effect.y - 2, 12, 4);
+                        ctx.fillRect(effect.x - 2, effect.y - 6, 4, 12);
+                        break;
+                        
+                    case 'icecrystal':
+                        if (effect.delay > 0) {
+                            effect.delay--;
+                            break;
+                        }
+                        
+                        ctx.save();
+                        ctx.translate(effect.x, effect.y);
+                        ctx.rotate(effect.angle + effect.life * 0.1);
+                        
+                        ctx.fillStyle = '#44DDFF';
+                        ctx.shadowColor = '#44DDFF';
+                        ctx.shadowBlur = 10;
+                        ctx.globalAlpha = effect.life / 30;
+                        
+                        // Crystal shape
+                        ctx.beginPath();
+                        ctx.moveTo(0, -effect.radius);
+                        ctx.lineTo(effect.radius * 0.5, 0);
+                        ctx.lineTo(0, effect.radius);
+                        ctx.lineTo(-effect.radius * 0.5, 0);
+                        ctx.closePath();
+                        ctx.fill();
+                        
+                        ctx.restore();
+                        break;
+                        
+                    case 'iceshard':
+                        effect.x += effect.vx;
+                        effect.y += effect.vy;
+                        effect.vx *= 0.95;
+                        effect.vy *= 0.95;
+                        
+                        ctx.fillStyle = '#44DDFF';
+                        ctx.globalAlpha = effect.life / 25;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        effect.radius *= 0.98;
+                        break;
+                        
+                    case 'freeze':
+                        ctx.strokeStyle = '#44DDFF';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = effect.life / 40;
+                        
+                        // Expanding ice ring
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        
+                        // Ice crystals around the ring
+                        for (let i = 0; i < 8; i++) {
+                            const crystalAngle = (i / 8) * Math.PI * 2;
+                            const crystalX = effect.x + Math.cos(crystalAngle) * effect.radius;
+                            const crystalY = effect.y + Math.sin(crystalAngle) * effect.radius;
+                            
+                            ctx.fillStyle = '#44DDFF';
+                            ctx.beginPath();
+                            ctx.arc(crystalX, crystalY, 4, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        
+                        effect.radius += 0.5;
+                        break;
+                        
+                    case 'shadowclone':
+                        // Move towards target
+                        if (effect.phase === 0) {
+                            const dx = effect.targetX - effect.x;
+                            const dy = effect.targetY - effect.y;
+                            const dist = Math.sqrt(dx * dx + dy * dy);
+                            
+                            if (dist > 10) {
+                                effect.x += (dx / dist) * 6;
+                                effect.y += (dy / dist) * 6;
+                            } else {
+                                effect.phase = 1; // Start attacking
+                            }
+                        }
+                        
+                        // Attack nearby enemies
+                        if (effect.phase === 1 && effect.attackCooldown <= 0) {
+                            enemies.forEach(enemy => {
+                                const dist = Math.sqrt(Math.pow(enemy.x - effect.x, 2) + Math.pow(enemy.y - effect.y, 2));
+                                if (dist < 60) {
+                                    enemy.takeDamage(effect.damage);
+                                    
+                                    const shadowAttackEffect = {
+                                        x: enemy.x,
+                                        y: enemy.y,
+                                        radius: 20,
+                                        life: 15,
+                                        type: 'shadowattack'
+                                    };
+                                    effects.push(shadowAttackEffect);
+                                }
+                            });
+                            effect.attackCooldown = 30;
+                        }
+                        
+                        if (effect.attackCooldown > 0) effect.attackCooldown--;
+                        
+                        // Draw shadow clone
+                        ctx.fillStyle = 'rgba(45, 27, 105, 0.8)';
+                        ctx.shadowColor = '#2d1b69';
+                        ctx.shadowBlur = 15;
+                        ctx.globalAlpha = effect.life / 120;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, 18, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Shadow details
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                        ctx.beginPath();
+                        ctx.arc(effect.x - 5, effect.y - 5, 3, 0, Math.PI * 2);
+                        ctx.arc(effect.x + 5, effect.y - 5, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'shadowattack':
+                        ctx.fillStyle = '#2d1b69';
+                        ctx.shadowColor = '#2d1b69';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = effect.life / 15;
+                        
+                        // Expanding shadow burst
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        effect.radius += 2;
+                        break;
+                        
+                    case 'gravityfield':
+                        // Gravity field effect on enemies
+                        enemies.forEach(enemy => {
+                            const dist = Math.sqrt(Math.pow(enemy.x - effect.x, 2) + Math.pow(enemy.y - effect.y, 2));
+                            if (dist < effect.radius) {
+                                // Pull enemies towards center
+                                const pullAngle = Math.atan2(effect.y - enemy.y, effect.x - enemy.x);
+                                const pullForce = effect.strength * (1 - dist / effect.radius);
+                                
+                                enemy.x += Math.cos(pullAngle) * pullForce;
+                                enemy.y += Math.sin(pullAngle) * pullForce;
+                                
+                                // Damage over time
+                                if (Date.now() - effect.lastDamage > 500) {
+                                    enemy.takeDamage(effect.damage * 0.3);
+                                    effect.lastDamage = Date.now();
+                                }
+                            }
+                        });
+                        
+                        // Draw gravity field
+                        ctx.strokeStyle = '#4a0e4e';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = (effect.life / 180) * 0.6;
+                        
+                        // Pulsing rings
+                        for (let i = 0; i < 3; i++) {
+                            const ringRadius = effect.radius * (0.3 + i * 0.35) + Math.sin(effect.life * 0.1 + i) * 10;
+                            ctx.beginPath();
+                            ctx.arc(effect.x, effect.y, ringRadius, 0, Math.PI * 2);
+                            ctx.stroke();
+                        }
+                        
+                        // Gravity particles
+                        for (let i = 0; i < 8; i++) {
+                            const particleAngle = (i / 8) * Math.PI * 2 + effect.life * 0.05;
+                            const particleRadius = effect.radius * 0.8;
+                            const particleX = effect.x + Math.cos(particleAngle) * particleRadius;
+                            const particleY = effect.y + Math.sin(particleAngle) * particleRadius;
+                            
+                            ctx.fillStyle = '#4a0e4e';
+                            ctx.beginPath();
+                            ctx.arc(particleX, particleY, 3, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        break;
+
+                    case 'sungod':
+                        // Sungod: ensnare enemies with radiant threads, apply burn, then explode at end
+                        // Visual threads array
+                        if (!effect._origLife) effect._origLife = effect.life;
+                        ctx.save();
+                        // glowing core
+                        ctx.globalAlpha = Math.min(1, effect.life / effect._origLife + 0.05);
+                        ctx.fillStyle = '#ffd96a'; ctx.shadowColor = '#ffd96a'; ctx.shadowBlur = 30;
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, 28 + Math.sin(effect.life * 0.12) * 6, 0, Math.PI*2); ctx.fill();
+
+                        // sun corona rings
+                        ctx.globalAlpha = 0.28 * Math.min(1, effect.life / effect._origLife + 0.05);
+                        for (let r = 0; r < 4; r++) {
+                            ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (0.4 + r*0.18) + Math.sin((effect.life + r*7) * 0.06) * 8, 0, Math.PI*2); ctx.strokeStyle = ['#ffcc66','#ffd977','#ffb84d','#ff9e33'][r%4]; ctx.lineWidth = 2; ctx.stroke();
+                        }
+
+                        // Pull enemies in and draw radiant threads
+                        effect._threads.length = 0;
+                        enemies.forEach(enemy => {
+                            const dx = effect.x - enemy.x; const dy = effect.y - enemy.y; const dist = Math.hypot(dx, dy);
+                            if (dist < effect.radius * 1.2) {
+                                // mark thread
+                                effect._threads.push(enemy);
+                                // pull force stronger when closer
+                                const strength = effect.pullStrength * (1 - Math.min(1, dist / effect.radius));
+                                enemy.x += (dx / Math.max(1, dist)) * strength * 0.9;
+                                enemy.y += (dy / Math.max(1, dist)) * strength * 0.9;
+                                // apply continuous burn (set burning timer)
+                                enemy.burning = Math.max(enemy.burning || 0, effect.burnDuration);
+                                // show small burn effect
+                                effects.push({ x: enemy.x + (Math.random()-0.5)*8, y: enemy.y + (Math.random()-0.5)*8, radius: 6 + Math.random()*6, life: 30, type: 'firetrail', color: '#ffcc66' });
+                            }
+                        });
+
+                        // draw threads to each pulled enemy
+                        ctx.lineWidth = 2.6; ctx.strokeStyle = '#fff1b8'; ctx.globalAlpha = 0.95;
+                        effect._threads.forEach(en => {
+                            ctx.beginPath(); ctx.moveTo(effect.x, effect.y); ctx.lineTo(en.x, en.y); ctx.stroke();
+                            // soft glow at enemy end
+                            ctx.beginPath(); ctx.fillStyle = 'rgba(255,210,140,0.9)'; ctx.arc(en.x, en.y, 6, 0, Math.PI*2); ctx.fill();
+                        });
+
+                        ctx.restore();
+
+                        // when the sun effect ends, spawn supernova
+                        if (effect.life <= 0) {
+                            const sx = effect.x, sy = effect.y;
+                            const superR = Math.max(300, effect.radius * 1.6);
+                            const dmg = Math.floor((FRUITS.SUN_GOD.damage || 220) * 1.5);
+                            // Supernova visual effect
+                            effects.push({ x: sx, y: sy, radius: superR, life: 40, type: 'supernova', color: '#fff0a8', owner: effect.owner, damage: dmg });
+                            // remove lingering burning? let burning continue but apply big damage/knockback now
+                            enemies.forEach(enemy => {
+                                const d = Math.hypot(enemy.x - sx, enemy.y - sy);
+                                if (d < superR) {
+                                    enemy.takeDamage(computeScaledDamage(dmg, effect.owner));
+                                    // push far away
+                                    const k = 240 + Math.random() * 160;
+                                    const nx = (enemy.x - sx) / Math.max(1, d);
+                                    const ny = (enemy.y - sy) / Math.max(1, d);
+                                    enemy.x += nx * k; enemy.y += ny * k;
+                                    enemy.vx = (enemy.vx || 0) + nx * 12; enemy.vy = (enemy.vy || 0) + ny * 8;
+                                }
+                            });
+                        }
+                        break;
+
+                    case 'supernova':
+                        // Large bright expanding explosion
+                        ctx.save();
+                        const progSN = 1 - (effect.life / 40);
+                        ctx.globalAlpha = Math.max(0, effect.life / 40 * 0.9);
+                        // core flash
+                        ctx.fillStyle = '#fff8d0'; ctx.beginPath(); ctx.arc(effect.x, effect.y, Math.max(8, effect.radius * 0.12 * (1 + progSN)), 0, Math.PI*2); ctx.fill();
+                        // outer scorch
+                        ctx.globalAlpha = Math.max(0, 0.6 * (1 - progSN)); ctx.fillStyle = '#ffcc66'; ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * progSN, 0, Math.PI*2); ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'meteorImpact':
+                        // Large cinematic impact: flash + shockwave + scorch particles
+                        ctx.save();
+                        const alpha = Math.max(0, effect.life / 48);
+                        // flash core
+                        ctx.globalAlpha = alpha * 0.9;
+                        ctx.fillStyle = effect.color || '#ffcc88';
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, Math.max(8, effect.radius * 0.35), 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // expanding shockwave ring
+                        ctx.globalAlpha = alpha * 0.6;
+                        ctx.strokeStyle = 'rgba(255,150,80,' + (alpha * 0.7) + ')';
+                        ctx.lineWidth = 6;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 48), 0, Math.PI * 2);
+                        ctx.stroke();
+
+                        // scorch smudges
+                        ctx.globalAlpha = alpha * 0.7;
+                        ctx.fillStyle = '#553322';
+                        for (let s = 0; s < 6; s++) {
+                            ctx.beginPath();
+                            const rx = effect.x + (Math.random() - 0.5) * effect.radius * 0.8;
+                            const ry = effect.y + (Math.random() - 0.5) * effect.radius * 0.4;
+                            ctx.arc(rx, ry, 6 + Math.random() * 10, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        ctx.restore();
+                        break;
+
+                    case 'firetrail':
+                        ctx.globalAlpha = Math.max(0, effect.life / 18);
+                        ctx.fillStyle = effect.color || '#ffb277';
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, Math.max(2, effect.radius || 3), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'bloomfield':
+                        // expanding floral field that heals player and poisons/slows enemies
+                        // expand quickly then settle
+                        if (!effect._init) effect._init = true;
+                        effect.radius = Math.min(160, effect.radius + 2.6);
+                        ctx.fillStyle = 'rgba(255,119,194,0.12)';
+                        ctx.shadowColor = '#ff77c2';
+                        ctx.shadowBlur = 28;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (60*6) + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / (60*6) + 0.3), 0, Math.PI*2);
+                        ctx.fill();
+
+                        // particle flowers
+                        for (let i=0;i<6;i++) {
+                            const a = (i / 6) * Math.PI * 2 + effect.life * 0.03;
+                            const px = effect.x + Math.cos(a) * (effect.radius * 0.6 + Math.sin(effect.life*0.1+i)*8);
+                            const py = effect.y + Math.sin(a) * (effect.radius * 0.6 + Math.cos(effect.life*0.1+i)*8);
+                            ctx.fillStyle = '#fff2f8';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 6, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+
+                        // apply heal/poison
+                        if (!effect._lastTick) effect._lastTick = Date.now();
+                        if (Date.now() - effect._lastTick > 800) {
+                            effect._lastTick = Date.now();
+                            // heal player if inside
+                            const d = Math.hypot(player.x - effect.x, player.y - effect.y);
+                            if (d < effect.radius) {
+                                const heal = Math.min(player.maxHp - player.hp, 6);
+                                player.hp += heal;
+                                spawnEffect({ x: player.x, y: player.y - 10, text: `+${heal} HP`, life: 40, type: 'healpickup', color:'#ff77c2' });
+                            }
+                            // poison/slow enemies inside
+                            enemies.forEach(enemy => {
+                                const ed = Math.hypot(enemy.x - effect.x, enemy.y - effect.y);
+                                if (ed < effect.radius) {
+                                    enemy.burning = (enemy.burning || 0) + 30; // light damage over time
+                                    enemy.slowed = Math.max(enemy.slowed || 0, 60);
+                                }
+                            });
+                        }
+                        break;
+
+                    case 'carnivortrap':
+                        // Visual for the carnivorous garden trap base while active
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(0.95, effect.life / (effect.maxLife || 60) + 0.05);
+                        ctx.fillStyle = effect.color || '#ff77c2';
+                        ctx.shadowColor = effect.color || '#ff77c2'; ctx.shadowBlur = 26;
+                        // pulsing mouth circle
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, Math.max(8, effect.radius * 0.6 * (1 - effect.life / (effect.maxLife || 60) + 0.2)), 0, Math.PI*2);
+                        ctx.fill();
+                        // petals around
+                        for (let i=0;i<6;i++) {
+                            const a = (i/6)*Math.PI*2 + (Date.now()/800) * (i%2?1:-1);
+                            ctx.beginPath(); ctx.arc(effect.x + Math.cos(a) * (effect.radius * 0.7), effect.y + Math.sin(a) * (effect.radius * 0.7), 6, 0, Math.PI*2); ctx.fill();
+                        }
+                        ctx.restore();
+                        break;
+
+                    case 'plantchew':
+                        // Chewing/bite visual: a chomping core with bits
+                        ctx.save();
+                        ctx.globalAlpha = Math.min(0.95, effect.life / (effect.maxLife || 40) + 0.05);
+                        ctx.fillStyle = effect.color || '#ff77c2';
+                        ctx.beginPath(); ctx.arc(effect.x, effect.y, effect.radius * (0.6 + (effect.life / (effect.maxLife || 36)) * 0.6), 0, Math.PI*2); ctx.fill();
+                        // small spit particles
+                        for (let i=0;i<4;i++) {
+                            const a = (i/4)*Math.PI*2 + effect.life * 0.12;
+                            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(effect.x + Math.cos(a) * (effect.radius * 0.4 + 4), effect.y + Math.sin(a) * (effect.radius * 0.4 + 4), 2 + Math.random() * 2, 0, Math.PI*2); ctx.fill();
+                        }
+                        ctx.restore();
+                        break;
+
+                    case 'echowave':
+                        // ring expanding with ripple and screen-shake hint
+                        ctx.strokeStyle = 'rgba(102,221,255,0.9)';
+                        ctx.lineWidth = 3 + (effect.life / 30) * 4;
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 + (30 - effect.life) * 0.6), 0, Math.PI*2);
+                        ctx.stroke();
+                        // small ripple particles
+                        for (let i=0;i<8;i++) {
+                            const a = (i/8)*Math.PI*2 + effect.life*0.05;
+                            const rx = effect.x + Math.cos(a) * (effect.radius * 0.6 + (30 - effect.life) * 1.6);
+                            const ry = effect.y + Math.sin(a) * (effect.radius * 0.6 + (30 - effect.life) * 1.6);
+                            ctx.fillStyle = '#cfefff';
+                            ctx.beginPath(); ctx.arc(rx, ry, 2 + (effect.life/30), 0, Math.PI*2); ctx.fill();
+                        }
+                        break;
+
+                    case 'prismShard':
+                        // colorful shard particle
+                        ctx.fillStyle = effect.color || '#ffffff';
+                        ctx.globalAlpha = Math.min(1, effect.life / 80 + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius || 5, 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'mammothimpact':
+                        // Massive stomping impact
+                        ctx.fillStyle = 'rgba(200,120,80,0.9)';
+                        ctx.shadowColor = '#d88f5a';
+                        ctx.shadowBlur = 40;
+                        ctx.globalAlpha = Math.min(1, effect.life / 30 + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.5), 0, Math.PI * 2);
+                        ctx.fill();
+                        // ground crack lines
+                        ctx.strokeStyle = 'rgba(120,80,50,0.8)';
+                        ctx.lineWidth = 3;
+                        for (let i = 0; i < 6; i++) {
+                            ctx.beginPath();
+                            const a = (i / 6) * Math.PI * 2 + (effect.life * 0.1);
+                            ctx.moveTo(effect.x, effect.y);
+                            ctx.lineTo(effect.x + Math.cos(a) * (effect.radius * 0.8), effect.y + Math.sin(a) * (effect.radius * 0.8));
+                            ctx.stroke();
+                        }
+                        break;
+
+                    case 'mammothdust':
+                        // Dust puff animation trailing the charge
+                        ctx.fillStyle = 'rgba(180,140,110,0.16)';
+                        ctx.shadowColor = '#b38a66';
+                        ctx.shadowBlur = 24;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 30 + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 30 + 0.6), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'pteroshadow':
+                        // Shadow ring indicating sky dive target area
+                        ctx.fillStyle = 'rgba(20,20,20,0.45)';
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 40 + 0.05);
+                        ctx.beginPath();
+                        ctx.ellipse(effect.x, effect.y + 8, effect.radius * 1.2, effect.radius * 0.5, 0, 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'pterodive':
+                        // Big aerial impact with wind slash visuals
+                        ctx.fillStyle = 'rgba(136,209,255,0.12)';
+                        ctx.shadowColor = '#88d1ff';
+                        ctx.shadowBlur = 40;
+                        ctx.globalAlpha = Math.min(1, effect.life / 40 + 0.05);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.3), 0, Math.PI*2);
+                        ctx.fill();
+                        // Wind slashes
+                        ctx.strokeStyle = 'rgba(200,240,255,0.6)';
+                        ctx.lineWidth = 4;
+                        for (let i=0;i<6;i++) {
+                            const a = (i/6)*Math.PI*2 + effect.life * 0.08;
+                            ctx.beginPath();
+                            ctx.arc(effect.x, effect.y, effect.radius * (0.4 + i*0.12), a, a + 0.6);
+                            ctx.stroke();
+                        }
+                        break;
+
+                    case 'raptor':
+                        // Velociraptor shadow attacker (reworked): seek -> pounce chain -> bleed
+                        ctx.fillStyle = 'rgba(168,108,255,0.95)';
+                        ctx.shadowColor = '#c3abff';
+                        ctx.shadowBlur = 18;
+                        // fade over lifetime
+                        ctx.globalAlpha = Math.max(0.25, effect.life / (effect.maxLife || 60));
+                        // body
+                        ctx.beginPath();
+                        ctx.ellipse(effect.x, effect.y, 14, 10, Math.sin(effect.life * 0.18), 0, Math.PI*2);
+                        ctx.fill();
+
+                        // simple motion: AI runs here so effect moves and attacks
+                        if (!effect._tick) effect._tick = 0;
+                        effect._tick++;
+
+                        // pick target if none or target died
+                        if ((!effect.target || effect.target.dead) && effect.state !== 'pounce') {
+                            let nearest = null; let nd = 1e9;
+                            enemies.forEach(e => { if (!e) return; if (e.dead) return; const d = Math.hypot(e.x - effect.x, e.y - effect.y); if (d < nd) { nd = d; nearest = e; } });
+                            if (nearest && nd < 600) {
+                                effect.target = nearest;
+                            }
+                        }
+
+                        // movement towards target
+                        if (effect.target) {
+                            const tx = effect.target.x - effect.x;
+                            const ty = effect.target.y - effect.y;
+                            const dist = Math.hypot(tx, ty);
+                            // approach
+                            const desiredSpeed = effect.speed || 6;
+                            if (dist > (effect.target.radius || 12) + 18) {
+                                const ang = Math.atan2(ty, tx);
+                                effect.x += Math.cos(ang) * Math.min(desiredSpeed, dist);
+                                effect.y += Math.sin(ang) * Math.min(desiredSpeed, dist);
+                            }
+
+                            // attempt pounce when close and cooldown ready
+                            effect._pounceCd = effect._pounceCd || 0;
+                            if (dist <= (effect.target.radius || 12) + 22 && effect._pounceCd <= 0) {
+                                // pounce hit
+                                const hitDmg = computeScaledDamage(FRUITS.VELOCIRAPTOR.damage || 28, effect.owner || player);
+                                try { effect.target.takeDamage(hitDmg); } catch (e) {}
+                                // apply bleed DoT: 3s of ticks every 30 frames
+                                effect.target.raptorBleed = Math.max(effect.target.raptorBleed || 0, 60 * 3);
+                                effect.target.raptorBleedDmg = computeScaledDamage(6, effect.owner || player);
+                                // visual hit
+                                effects.push({ x: effect.target.x, y: effect.target.y, radius: 18, life: 20, type: 'shadowattack', color: '#b78cff' });
+
+                                // chain: find next nearest enemy near current target
+                                let next = null; let nd2 = 1e9;
+                                enemies.forEach(e => { if (!e) return; if (e === effect.target) return; if (e.dead) return; const dd = Math.hypot(e.x - effect.target.x, e.y - effect.target.y); if (dd < nd2 && dd < 320) { nd2 = dd; next = e; } });
+                                if (next) {
+                                    effect.target = next;
+                                } else {
+                                    // no next: clear target and wander slightly
+                                    effect.target = null;
+                                }
+
+                                effect._lastHit = effect.target;
+                                effect._pounceCd = 18; // cooldown frames before next pounce
+                            }
+                        } else {
+                            // wander slowly if no target
+                            effect.x += (Math.random() - 0.5) * 1.4;
+                            effect.y += (Math.random() - 0.5) * 1.4;
+                        }
+
+                        if (effect._pounceCd > 0) effect._pounceCd--;
+                        break;
+
+                    case 'miragefield':
+                        // Distortion field
+                        ctx.fillStyle = 'rgba(179,230,255,0.08)';
+                        ctx.shadowColor = '#b3e6ff';
+                        ctx.shadowBlur = 20;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / (60*5)), 0, Math.PI * 2);
+                        ctx.fill();
+                        // subtle ripple lines
+                        for (let i=0;i<6;i++) {
+                            ctx.strokeStyle = 'rgba(179,230,255,0.06)';
+                            ctx.lineWidth = 1;
+                            ctx.beginPath();
+                            ctx.arc(effect.x, effect.y, effect.radius * (i/6) * (effect.life / (60*5) + 0.5), 0, Math.PI*2);
+                            ctx.stroke();
+                        }
+                        break;
+
+                    case 'mirageshimmer':
+                        ctx.fillStyle = '#b3e6ff';
+                        ctx.globalAlpha = Math.max(0.2, effect.life / 80);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 80 + 0.2), 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'lavapillar':
+                        // Rising lava pillar
+                        ctx.fillStyle = '#ff4500';
+                        ctx.shadowColor = '#ff4500';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = effect.life / 60;
+                        ctx.beginPath();
+                        ctx.rect(effect.x - 8, effect.y - effect.life * 0.6, 16, effect.life * 0.6);
+                        ctx.fill();
+                        break;
+
+                    case 'lavaburn':
+                        ctx.fillStyle = 'rgba(255,69,0,0.18)';
+                        ctx.shadowColor = '#ff8c42';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = effect.life / 90;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'starfall':
+                        if (effect.delay && effect.delay > 0) { effect.delay--; 
+                            // falling animation: show a streak above
+                            ctx.fillStyle = '#ffe066';
+                            ctx.globalAlpha = 0.9;
+                            ctx.beginPath();
+                            ctx.ellipse(effect.x, effect.y - 20 - effect.delay, 3, 10, 0, 0, Math.PI*2);
+                            ctx.fill();
+                            break;
+                        }
+                        // Impact
+                        ctx.fillStyle = '#ffe066';
+                        ctx.shadowColor = '#fff2b2';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, 12 + (30 - effect.life) * 0.6, 0, Math.PI*2);
+                        ctx.fill();
+                        // Damage nearby enemies and stun briefly (do once)
+                        if (!effect._impacted) {
+                            enemies.forEach(enemy => {
+                                const d = Math.hypot(enemy.x - effect.x, enemy.y - effect.y);
+                                if (d < 28) {
+                                    enemy.takeDamage(computeScaledDamage(FRUITS.CELESTIAL.damage * 0.6, this));
+                                    enemy.stunned = 20; // short stun
+                                }
+                            });
+                            effect._impacted = true;
+                        }
+                        break;
+
+                    case 'aurorafield':
+                        // shimmering aurora field
+                        ctx.fillStyle = 'rgba(102,255,204,0.06)';
+                        ctx.shadowColor = '#66ffcc';
+                        ctx.shadowBlur = 40;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (60*4));
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / (60*4) + 0.2), 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'aurorashimmer':
+                        ctx.fillStyle = '#66ffcc';
+                        ctx.globalAlpha = Math.max(0.15, effect.life / 80);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 80 + 0.3), 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'quasarbeam':
+                        // instant beam line
+                        ctx.strokeStyle = '#7f7fff';
+                        ctx.lineWidth = 2 + (effect.life / 18) * 2;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 18 + 0.2);
+                        ctx.beginPath();
+                        ctx.moveTo(effect.x, effect.y);
+                        ctx.lineTo(effect.tx || effect.x, effect.ty || effect.y);
+                        ctx.stroke();
+                        break;
+
+                    case 'quasarspark':
+                        ctx.fillStyle = '#7f7fff';
+                        ctx.globalAlpha = effect.life / 60;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'originpulse':
+                        ctx.fillStyle = 'rgba(255,255,255,0.14)';
+                        ctx.shadowColor = '#ffffff';
+                        ctx.shadowBlur = 24;
+                        ctx.globalAlpha = effect.life / 40;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.3), 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'nebulafog':
+                        ctx.fillStyle = 'rgba(170,102,255,0.12)';
+                        ctx.shadowColor = '#aa66ff';
+                        ctx.shadowBlur = 60;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / (60*5) + 0.05);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / (60*5) + 0.2), 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'nebulaspark':
+                        ctx.fillStyle = '#cfa8ff';
+                        ctx.globalAlpha = effect.life / 60;
+                        ctx.beginPath();
+                        ctx.arc(effect.x + (Math.random()-0.5)*6, effect.y + (Math.random()-0.5)*6, 3 + Math.random()*3, 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'seraphimpact':
+                        ctx.fillStyle = '#ffd1a6';
+                        ctx.shadowColor = '#fff0d6';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = Math.min(1, effect.life / 40 + 0.1);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.4), 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'seraphheal':
+                        ctx.fillStyle = 'rgba(255,210,166,0.12)';
+                        ctx.shadowColor = '#ffd1a6';
+                        ctx.shadowBlur = 28;
+                        ctx.globalAlpha = Math.min(0.9, effect.life / 40 + 0.05);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.2), 0, Math.PI*2);
+                        ctx.fill();
+                        // Heal player if inside area once per second
+                        if (!effect._lastHeal) effect._lastHeal = Date.now();
+                        if (Date.now() - effect._lastHeal > 1000) {
+                            effect._lastHeal = Date.now();
+                            const d = Math.hypot(player.x - effect.x, player.y - effect.y);
+                            if (d < effect.radius) {
+                                const heal = Math.min(player.maxHp - player.hp, 8);
+                                player.hp += heal;
+                                spawnEffect({ x: player.x, y: player.y - 10, text: `+${heal} HP`, life: 40, type: 'healpickup', color:'#ffd1a6' });
+                            }
+                        }
+                        break;
+
+                    case 'holyarrow':
+                        // simple projectile representation
+                        effect.x += Math.cos(effect.angle) * (effect.speed || 8);
+                        effect.y += Math.sin(effect.angle) * (effect.speed || 8);
+                        ctx.fillStyle = '#fff2d6';
+                        ctx.globalAlpha = 0.95;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, 4, 0, Math.PI*2);
+                        ctx.fill();
+                        break;
+
+                    case 'sirenwave':
+                        ctx.fillStyle = '#ff66cc';
+                        ctx.globalAlpha = Math.max(0.2, effect.life / 20);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'charmAura':
+                        ctx.strokeStyle = '#ff99d9';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = effect.life / 90;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 90 + 0.2), 0, Math.PI * 2);
+                        ctx.stroke();
+                        break;
+
+                    case 'tidalarea':
+                        // Slow area + heal player when inside
+                        // Heal tick
+                        if (!effect._lastHeal) effect._lastHeal = Date.now();
+                        if (Date.now() - effect._lastHeal > 1000) {
+                            effect._lastHeal = Date.now();
+                            // heal player if inside
+                            const d = Math.hypot(player.x - effect.x, player.y - effect.y);
+                            if (d < effect.radius) {
+                                const heal = Math.min(player.maxHp - player.hp, effect.healPerSecond || 4);
+                                player.hp += heal;
+                                spawnEffect({ x: player.x, y: player.y - 10, text: `+${heal} HP`, life: 40, type: 'healpickup', color:'#66ddff' });
+                            }
+                        }
+                        // slow enemies handled by flag set earlier
+                        ctx.fillStyle = 'rgba(51,170,255,0.12)';
+                        ctx.shadowColor = '#33aaff';
+                        ctx.shadowBlur = 18;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / (60*4)), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'colossusslam':
+                        ctx.fillStyle = 'rgba(139,111,76,0.25)';
+                        ctx.shadowColor = '#8b6f4c';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = effect.life / 40;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 40 + 0.3), 0, Math.PI * 2);
+                        ctx.fill();
+                        // rock particles
+                        for (let i=0;i<4;i++) {
+                            const angle = (i/4)*Math.PI*2 + Math.random()*0.6;
+                            const px = effect.x + Math.cos(angle) * (effect.radius * (Math.random()*0.6+0.4));
+                            const py = effect.y + Math.sin(angle) * (effect.radius * (Math.random()*0.6+0.4));
+                            ctx.fillStyle = '#8b6f4c';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 4 + Math.random()*4, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                        break;
+                        
+                    case 'phoenixfire':
+                        effect.x += effect.vx;
+                        effect.y += effect.vy;
+                        effect.vx *= 0.95;
+                        effect.vy *= 0.95;
+                        
+                        // legacy phoenix fire (kept for compatibility)
+                        ctx.fillStyle = effect.color || '#ff6b35';
+                        ctx.shadowColor = effect.color || '#ff6b35';
+                        ctx.shadowBlur = 10;
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        effect.radius *= 0.97;
+                        break;
+
+                    case 'bluephoenixfire':
+                        effect.x += effect.vx;
+                        effect.y += effect.vy;
+                        effect.vx *= 0.95;
+                        effect.vy *= 0.95;
+                        ctx.fillStyle = '#66ccff';
+                        ctx.shadowColor = '#66ccff';
+                        ctx.shadowBlur = 18;
+                        ctx.globalAlpha = Math.min(1, effect.life / 40);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 40), 0, Math.PI * 2);
+                        ctx.fill();
+                        // small sparks
+                        if (Math.random() < 0.15) {
+                            ctx.fillStyle = '#aee9ff';
+                            ctx.beginPath();
+                            ctx.arc(effect.x + (Math.random()-0.5)*8, effect.y + (Math.random()-0.5)*8, 2, 0, Math.PI*2);
+                            ctx.fill();
+                        }
+                        effect.radius *= 0.98;
+                        break;
+                        
+                    case 'burn':
+                        ctx.fillStyle = '#ff6b35';
+                        ctx.globalAlpha = (effect.life / 60) * 0.8 + 0.2;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Burn damage over time (kept as area effect)
+                        if (effect.life % 20 === 0) {
+                            enemies.forEach(enemy => {
+                                const dist = Math.sqrt(Math.pow(enemy.x - effect.x, 2) + Math.pow(enemy.y - effect.y, 2));
+                                if (dist < effect.radius) {
+                                    enemy.takeDamage(5);
+                                    enemy.burning = enemy.burning || 0;
+                                    enemy.burning += 60;
+                                }
+                            });
+                        }
+                        
+                        break;
+
+                    case 'blueburn':
+                        ctx.fillStyle = '#66ccff';
+                        ctx.globalAlpha = (effect.life / 60) * 0.9 + 0.1;
+                        ctx.shadowColor = '#66ccff';
+                        ctx.shadowBlur = 14;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        // deal area damage periodically (kept in effect processing elsewhere)
+                        break;
+
+                    case 'dragonflame':
+                        // Large burst of flame
+                        ctx.fillStyle = '#ff6644';
+                        ctx.shadowColor = '#ff9966';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = effect.life / 20;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 20), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'dragontrail':
+                        ctx.fillStyle = effect.color || '#ff8a33';
+                        ctx.globalAlpha = Math.max(0, effect.life / 30);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, Math.max(2, effect.radius || 4), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'dragonclaw':
+                        // big directional slash bloom
+                        ctx.save();
+                        ctx.globalAlpha = Math.max(0.18, effect.life / 20);
+                        ctx.fillStyle = effect.color || '#ff9a55';
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius || 48, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                        break;
+
+                    case 'dragontransform':
+                        ctx.fillStyle = 'rgba(255, 180, 100, 0.9)';
+                        ctx.shadowColor = '#ffaa66';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.5), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'dragonend':
+                        ctx.fillStyle = 'rgba(200, 120, 80, 0.9)';
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.3), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'zoantransform':
+                        ctx.fillStyle = 'rgba(180,240,160,0.9)';
+                        ctx.shadowColor = '#b4f0a0';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.4), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'zoanend':
+                        ctx.fillStyle = 'rgba(120,200,100,0.9)';
+                        ctx.globalAlpha = effect.life / 30;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (1 - effect.life / 30 + 0.3), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                    
+                    case 'damageAura':
+                        // Red aura ring for damage boost
+                        ctx.fillStyle = 'rgba(255,80,80,0.12)';
+                        ctx.shadowColor = 'rgba(255,60,60,0.6)';
+                        ctx.shadowBlur = 30;
+                        ctx.globalAlpha = Math.min(1, effect.life / 90);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 90), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+
+                    case 'powerParticle':
+                        ctx.fillStyle = '#ff6666';
+                        ctx.shadowColor = '#ffaaaa';
+                        ctx.shadowBlur = 8;
+                        ctx.globalAlpha = Math.max(0, Math.min(1, effect.life / 60));
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        // rising motion
+                        if (typeof effect.vy === 'number') effect.y += effect.vy;
+                        effect.x += (Math.random() - 0.5) * 0.6;
+                        break;
+                        break;
+                        
+                    case 'phoenixrebirth':
+                        ctx.fillStyle = '#ffaa00';
+                        ctx.shadowColor = '#ffaa00';
+                        ctx.shadowBlur = 25;
+                        ctx.globalAlpha = effect.life / 40;
+                        
+                        // Expanding golden ring
+                        ctx.strokeStyle = '#ffaa00';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        
+                        // Rising flames
+                        for (let i = 0; i < 6; i++) {
+                            const flameAngle = (i / 6) * Math.PI * 2;
+                            const flameX = effect.x + Math.cos(flameAngle) * effect.radius * 0.5;
+                            const flameY = effect.y + Math.sin(flameAngle) * effect.radius * 0.5;
+                            
+                            ctx.fillStyle = '#ffaa00';
+                            ctx.beginPath();
+                            ctx.arc(flameX, flameY, 6, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        
+                        effect.radius += 1;
+                        break;
+
+                    case 'regenBuff':
+                        // soft blue healing aura
+                        ctx.fillStyle = 'rgba(102,204,255,0.12)';
+                        ctx.shadowColor = '#aee9ff';
+                        ctx.shadowBlur = 20;
+                        ctx.globalAlpha = Math.min(1, effect.life / 80);
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, effect.radius * (effect.life / 80 + 0.3), 0, Math.PI * 2);
+                        ctx.fill();
+                        break;
+                        
+                    case 'goldpickup':
+                    case 'healpickup':
+                    case 'fruitpickup':
+                        ctx.fillStyle = effect.color;
+                        ctx.font = 'bold 14px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+                        ctx.shadowBlur = 3;
+                        ctx.globalAlpha = effect.life / 40;
+                        ctx.fillText(effect.text, effect.x, effect.y);
+                        effect.y -= 1.5;
+                        break;
+                        
+                    case 'heal':
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
+                        ctx.shadowColor = '#00FF00';
+                        ctx.shadowBlur = 15;
+                        ctx.globalAlpha = effect.life / 30;
+                        
+                        // Healing pulse
+                        const healRadius = effect.radius + Math.sin(effect.life * 0.5) * 8;
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, healRadius, 0, Math.PI * 2);
+                        ctx.fill();
+                        
+                        // Healing cross
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                        ctx.fillRect(effect.x - 2, effect.y - 10, 4, 20);
+                        ctx.fillRect(effect.x - 10, effect.y - 2, 20, 4);
+                        break;
+                }
+                
+                ctx.restore();
+                
+                effect.life--;
+                if (effect.life <= 0) {
+                    effects.splice(index, 1);
+                }
+            });
+        }
+
+        // === PVP Arena: simple AI opponent and manager ===
+        class AIPlayer extends Player {
+            constructor(x, y) {
+                super(x, y);
+                this.isAI = true;
+                this.target = player; // always fight the real player
+                this.lastAttack = 0;
+                this.lastSkill = 0;
+                this.actionTimer = 0;
+                // Make AI compatible with Enemy expectations so existing skills target it
+                this.isBoss = false;
+                this.dead = false;
+                this.stunned = 0;
+                this.frozen = 0;
+                this.behavior = 'chase';
+                this.isElite = false;
+                this.invulnerable = 0;
+                this.spawnInvul = 0;
+                this.emoji = '🤖';
+            }
+
+            chooseRandomFruit() {
+                const pool = GACHA_FRUITS.slice();
+                if (!pool || pool.length === 0) { this.fruit = null; return null; }
+                this.fruit = pool[Math.floor(Math.random() * pool.length)];
+                // small power tweak based on rarity
+                try {
+                    const f = FRUITS[this.fruit];
+                    if (f && f.rarity === 'mythical') this.damage += 6;
+                    if (f && f.rarity === 'legendary') this.damage += 3;
+                } catch (e) {}
+                return this.fruit;
+            }
+
+            update() {
+                if (this.hp <= 0) return;
+                // basic chase logic
+                const tx = this.target.x, ty = this.target.y;
+                const ang = Math.atan2(ty - this.y, tx - this.x);
+                const spd = Math.min(this.speed, MAX_PLAYER_SPEED) * 0.9;
+                this.x += Math.cos(ang) * spd;
+                this.y += Math.sin(ang) * spd;
+
+                // keep inside arena bounds if present
+                if (ArenaManager && ArenaManager.bounds) {
+                    const b = ArenaManager.bounds;
+                    this.x = Math.max(b.x1 + this.radius, Math.min(b.x2 - this.radius, this.x));
+                    this.y = Math.max(b.y1 + this.radius, Math.min(b.y2 - this.radius, this.y));
+                }
+
+                // attack when close
+                const now = Date.now();
+                const dist = Math.hypot(this.x - tx, this.y - ty);
+                if (dist < 80 && now - this.lastAttack > 900) {
+                    this.basicAttack();
+                    this.lastAttack = now;
+                }
+
+                if(this.fruit) Voyage.castUltimate(this);
+            }
+
+            draw() {
+                // reuse Player.draw but add AI label
+                try { super.draw(); } catch (e) {}
+                ctx.save();
+                ctx.fillStyle = 'rgba(255,255,255,0.9)';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('AI', this.x, this.y - this.radius * 3.8);
+                // draw AI hitbox for debugging during arena
+                try {
+                    if (typeof ArenaManager !== 'undefined' && ArenaManager.active) {
+                        ctx.beginPath(); ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1; ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.stroke();
+                    }
+                } catch (e) {}
+                ctx.restore();
+            }
+
+            // Override takeDamage so ArenaManager can handle AI deaths correctly in PvP
+            takeDamage(amount) {
+                if (gameState.paused) return;
+                // respect temporary invulnerability
+                if (this.invulnerable && this.invulnerable > 0) return;
+                // apply shield if present (mirror Player.takeDamage behaviour)
+                if (this.shield && this.shield > 0) {
+                    const absorbed = Math.min(this.shield, amount);
+                    this.shield -= absorbed;
+                    amount -= absorbed;
+                    try { spawnEffect({ x: this.x, y: this.y - 10, text: `Shield -${absorbed}`, life: 40, type: 'damage', color: '#66ffcc' }); } catch (e) {}
+                }
+                if (amount <= 0) return;
+
+                this.hp -= amount;
+                try { spawnEffect({ x: this.x, y: this.y - 20, text: `-${amount}`, life: 30, type: 'damage' }); } catch (e) {}
+
+                if (this.hp <= 0) {
+                    this.dead = true;
+                    // remove from enemies array to avoid lingering references
+                    try {
+                        const idx = enemies.indexOf(this);
+                        if (idx > -1) enemies.splice(idx, 1);
+                    } catch (e) {}
+                    // notify ArenaManager to handle round logic
+                    try {
+                        if (typeof ArenaManager !== 'undefined' && ArenaManager.active) {
+                            ArenaManager.handleDeath(this);
+                        }
+                    } catch (e) { console.error('AIPlayer.takeDamage -> ArenaManager.handleDeath error', e); }
+                }
+            }
+        }
+
+        const ArenaManager = {
+            active: false,
+            ai: null,
+            overlay: null,
+            bounds: null,
+            totalRounds: 3,
+            currentRound: 1,
+            playerRoundWins: 0,
+            aiRoundWins: 0,
+            playerLives: 2,
+            aiLives: 2,
+            start() {
+                if (this.active) return;
+                this.active = true;
+                // clear current world short-lived entities to isolate arena
+                enemies.length = 0; projectiles.length = 0; fruits.length = 0; portals.length = 0; droppedItems.length = 0; effects.length = 0; specialAttacks.length = 0;
+
+                // define bounds centered in world but leave margins
+                const margin = 180;
+                this.bounds = { x1: margin, y1: margin, x2: GAME_WIDTH - margin, y2: GAME_HEIGHT - margin };
+
+                // spawn AI opposite side of player
+                const ax = Math.max(this.bounds.x1 + 80, Math.min(this.bounds.x2 - 80, player.x + (Math.random() > 0.5 ? 400 : -400)));
+                const ay = Math.max(this.bounds.y1 + 80, Math.min(this.bounds.y2 - 80, player.y + (Math.random() > 0.5 ? 120 : -120)));
+                this.ai = new AIPlayer(ax, ay);
+                // make AI match player's level and basic stats for fair PvP but a bit slower
+                this.ai.level = player.level;
+                this.ai.maxHp = player.maxHp;
+                this.ai.hp = player.maxHp;
+                this.ai.damage = player.damage;
+                // reduce AI speed in PvP for fairness
+                this.ai.speed = Math.max(1, player.speed * 0.65);
+                this.ai.chooseRandomFruit();
+                // Add AI to enemies array so existing enemy-targeting skills hit it naturally
+                try { enemies.push(this.ai); } catch (e) { console.error('Failed to add AI to enemies array', e); }
+
+                // small overlay UI
+                const cont = document.getElementById('gameContainer');
+                this.overlay = document.createElement('div');
+                this.overlay.style.position = 'absolute'; this.overlay.style.right = '15px'; this.overlay.style.top = '15px'; this.overlay.style.padding = '8px 12px'; this.overlay.style.background = 'rgba(0,0,0,0.45)'; this.overlay.style.color = 'white'; this.overlay.style.borderRadius = '8px'; this.overlay.style.zIndex = 800;
+                this.overlay.id = 'arenaOverlay';
+                this.currentRound = 1; this.playerRoundWins = 0; this.aiRoundWins = 0; this.playerLives = 2; this.aiLives = 2;
+                this.overlay.innerHTML = `<div><strong>PVP Arena</strong></div><div id="arenaRound">Round: ${this.currentRound}/${this.totalRounds}</div><div id="arenaLives">You: ❤️${this.playerLives} • AI: ❤️${this.aiLives}</div><div id="arenaStatus">AI: ${this.ai.fruit || '-'} Lv${this.ai.level}</div><div id="arenaMsg">Tekan P untuk keluar</div>`;
+                cont.appendChild(this.overlay);
+
+                // optionally center camera
+                camera.lerp = 0.12;
+            },
+            end(result) {
+                this.active = false;
+                if (this.overlay && this.overlay.parentNode) this.overlay.parentNode.removeChild(this.overlay);
+                this.overlay = null;
+                // reward: winner gets 2 random fruits + 5000 gold
+                if (result === 'win') {
+                    player.gold += 5000;
+                    // give 2 random fruits from gacha pool
+                    for (let i = 0; i < 2; i++) {
+                        const pick = (typeof GACHA_FRUITS !== 'undefined' && GACHA_FRUITS.length) ? GACHA_FRUITS[Math.floor(Math.random() * GACHA_FRUITS.length)] : null;
+                        if (pick) {
+                            const added = player.inventory.add({ type: 'fruit', value: pick });
+                            if (!added) {
+                                // if inventory full, spawn dropped item near player
+                                droppedItems.push(new DroppedItem(player.x + (Math.random()-0.5)*40, player.y + (Math.random()-0.5)*40, 'fruit', pick));
+                            }
+                        }
+                    }
+                    spawnEffect({ x: player.x, y: player.y - 30, text: `Menang! +5000G +2 Buah`, life: 120, type:'goldpickup', color:'#FFD700' });
+                } else if (result === 'lose') {
+                    spawnEffect({ x: player.x, y: player.y - 30, text: `Kalah`, life: 80, type:'damage' });
+                }
+                this.ai = null; this.bounds = null;
+                camera.lerp = 0.16;
+                // regenerate island so world continues
+                try { player.generateIsland(); } catch (e) {}
+                // remove AI from enemies if still present
+                try {
+                    for (let i = enemies.length - 1; i >= 0; i--) {
+                        if (enemies[i] && enemies[i].isAI) enemies.splice(i, 1);
+                    }
+                } catch (e) { /* ignore */ }
+            },
+
+            startRound() {
+                // reset per-round lives and hp
+                this.playerLives = 2; this.aiLives = 2;
+                player.hp = player.maxHp; player.x = (this.bounds.x1 + this.bounds.x2) / 2 - 60; player.y = (this.bounds.y1 + this.bounds.y2) / 2;
+                if (this.ai) { this.ai.hp = this.ai.maxHp; this.ai.x = (this.bounds.x1 + this.bounds.x2) / 2 + 60; this.ai.y = (this.bounds.y1 + this.bounds.y2) / 2; }
+                // update overlay
+                const rEl = document.getElementById('arenaRound'); if (rEl) rEl.textContent = `Round: ${this.currentRound}/${this.totalRounds}`;
+                const lEl = document.getElementById('arenaLives'); if (lEl) lEl.textContent = `You: ❤️${this.playerLives} • AI: ❤️${this.aiLives}`;
+            },
+
+            handleDeath(victim) {
+                // victim is either player or AI
+                if (!this.active) return;
+                if (victim.isAI) {
+                    this.aiLives--;
+                    const lEl = document.getElementById('arenaLives'); if (lEl) lEl.textContent = `You: ❤️${this.playerLives} • AI: ❤️${this.aiLives}`;
+                    if (this.aiLives > 0) {
+                        // respawn AI
+                        this.ai.hp = this.ai.maxHp;
+                        this.ai.x = (this.bounds.x1 + this.bounds.x2) / 2 + 60;
+                        this.ai.y = (this.bounds.y1 + this.bounds.y2) / 2;
+                        return;
+                    } else {
+                        // player wins the round
+                        this.playerRoundWins++;
+                    }
+                } else {
+                    this.playerLives--;
+                    const lEl = document.getElementById('arenaLives'); if (lEl) lEl.textContent = `You: ❤️${this.playerLives} • AI: ❤️${this.aiLives}`;
+                    if (this.playerLives > 0) {
+                        // respawn player
+                        player.hp = player.maxHp;
+                        player.x = (this.bounds.x1 + this.bounds.x2) / 2 - 60;
+                        player.y = (this.bounds.y1 + this.bounds.y2) / 2;
+                        return;
+                    } else {
+                        // AI wins the round
+                        this.aiRoundWins++;
+                    }
+                }
+
+                // Check match end condition (first to majority of rounds)
+                const needed = Math.ceil(this.totalRounds / 2);
+                if (this.playerRoundWins >= needed || this.aiRoundWins >= needed || this.currentRound >= this.totalRounds) {
+                    // determine winner
+                    if (this.playerRoundWins > this.aiRoundWins) this.end('win'); else this.end('lose');
+                    return;
+                }
+
+                // advance to next round
+                this.currentRound++;
+                // small inter-round pause: reset hp and lives
+                this.startRound();
+            },
+            update() {
+                if (!this.active) return;
+                // ensure AI is present in enemies[] so existing skills target it
+                try {
+                    if (this.ai && !enemies.includes(this.ai)) enemies.push(this.ai);
+                } catch (e) {}
+                if (this.ai) this.ai.update();
+                // check end conditions
+                // death handling now via handleDeath, so no immediate match end here
+                // keep AI inside
+                if (this.ai && this.bounds) {
+                    const b = this.bounds;
+                    if (this.ai.x < b.x1 + this.ai.radius) this.ai.x = b.x1 + this.ai.radius;
+                    if (this.ai.x > b.x2 - this.ai.radius) this.ai.x = b.x2 - this.ai.radius;
+                    if (this.ai.y < b.y1 + this.ai.radius) this.ai.y = b.y1 + this.ai.radius;
+                    if (this.ai.y > b.y2 - this.ai.radius) this.ai.y = b.y2 - this.ai.radius;
+                }
+                // update overlay status
+                const s = document.getElementById('arenaStatus'); if (s && this.ai) s.textContent = `AI: ${this.ai.fruit || '-'} Lv${this.ai.level}`;
+            },
+            draw() {
+                if (!this.active) return;
+                if (!this.bounds) return;
+                ctx.save();
+                ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 4;
+                const b = this.bounds; ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+                ctx.restore();
+                // AI is drawn via the normal enemies.forEach loop (we push it into enemies[] on start)
+            }
+        };
+
+        // toggle arena with P
+        // Main game loop with camera follow (deadzone + smoothing)
+        function gameLoop() {
+            Voyage.tick();
+            if(gameState.paused) { requestAnimationFrame(gameLoop); return; }
+            PirateArt.tick(false);
+            // Clear canvas using viewport size
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Update game objects (world-space positions) if not paused
+            if (!gameState.paused) {
+                player.update();
+                enemies.forEach(enemy => enemy.update());
+                projectiles.forEach(projectile => projectile.update());
+                fruits.forEach(fruit => fruit.update());
+                portals.forEach(portal => portal.update());
+                droppedItems.forEach(item => item.update());
+
+                // Update special attack controllers
+                for (let i = specialAttacks.length - 1; i >= 0; i--) {
+                    const sa = specialAttacks[i];
+                    try { if (sa.update) sa.update(); } catch (e) { console.error('specialAtt update', e); }
+                    if (sa.finished) specialAttacks.splice(i, 1);
+                }
+
+                // Arena update hook (if active, update isolated arena logic)
+                try { if (typeof ArenaManager !== 'undefined' && ArenaManager.active) ArenaManager.update(); } catch (e) { console.error('ArenaManager.update error', e); }
+            }
+
+            // Lava damage processing (tick every 600ms)
+            if (lavaPits && lavaPits.length && Date.now() - lastLavaTick > 600) {
+                lastLavaTick = Date.now();
+                // player
+                lavaPits.forEach(pit => {
+                    const dx = player.x - pit.x;
+                    const dy = player.y - pit.y;
+                    // check ellipse containment using normalized coordinates
+                    const nx = dx / pit.rx;
+                    const ny = dy / pit.ry;
+                    if (nx * nx + ny * ny < 1) {
+                        if (!player.immuneToLava) player.takeDamage(8); // lava tick damage
+                        spawnEffect({ x: player.x, y: player.y - 20, text: '-8', life: 30, type: 'damage' });
+                    }
+                });
+
+                // enemies
+                enemies.forEach(enemy => {
+                    lavaPits.forEach(pit => {
+                        if (enemy.lavaImmune) return;
+                        const dx = enemy.x - pit.x;
+                        const dy = enemy.y - pit.y;
+                        const nx = dx / pit.rx;
+                        const ny = dy / pit.ry;
+                        if (nx * nx + ny * ny < 1) {
+                            enemy.takeDamage(6);
+                            effects.push({ x: enemy.x, y: enemy.y, radius: 10, life: 20, type: 'lavaburn' });
+                        }
+                    });
+                });
+            }
+
+            // Remove expired dropped items
+            for (let i = droppedItems.length - 1; i >= 0; i--) {
+                if (droppedItems[i].life <= 0) {
+                    droppedItems.splice(i, 1);
+                }
+            }
+
+            // Phase-island: check wave completion and spawn boss+adds
+            if (gameState.phaseActive && !gameState.phaseBossSpawned) {
+                // if no normal enemies remain (only possible stray adds aside), spawn boss wave
+                const normalEnemies = enemies.filter(e => !e.isBoss);
+                if (normalEnemies.length === 0) {
+                    // spawn boss near center
+                    const bx = GAME_WIDTH / 2 + (Math.random() - 0.5) * 200;
+                    const by = GAME_HEIGHT / 2 + (Math.random() - 0.5) * 200;
+                    const boss = new Boss(bx, by, gameState.currentIsland);
+                    // give a few seconds of invulnerability so boss doesn't die immediately
+                    boss.invulnerable = 180; // 3 seconds (60fps)
+                    boss.spawnInvul = 180;
+                    // temporarily make boss immune to lava and harmful environmental effects
+                    boss.lavaImmune = true;
+                    setTimeout(() => { boss.lavaImmune = false; }, 3200);
+                    enemies.push(boss);
+
+                    // spawn one elite (stronger normal)
+                    const ex = bx + (Math.random() - 0.5) * 160;
+                    const ey = by + (Math.random() - 0.5) * 160;
+                    const elite = new Enemy(ex, ey, gameState.currentIsland);
+                    elite.maxHp *= 1.6; elite.hp = elite.maxHp; elite.damage *= 1.4; elite.radius += 4;
+                    // mark as elite and update emoji to a stronger variant
+                    try { elite.isElite = true; elite.emoji = ELITE_EMOJIS[elite.islandType] || elite.emoji; } catch (e) {}
+                    enemies.push(elite);
+
+                    // spawn 10 additional normals
+                    for (let i = 0; i < 10; i++) {
+                        let nx, ny;
+                        do {
+                            nx = Math.random() * (GAME_WIDTH - 200) + 100;
+                            ny = Math.random() * (GAME_HEIGHT - 200) + 100;
+                        } while (Math.hypot(nx - player.x, ny - player.y) < 120);
+                        const ne = new Enemy(nx, ny, gameState.currentIsland);
+                        enemies.push(ne);
+                    }
+
+                    gameState.phaseBossSpawned = true;
+                    // notification
+                    spawnEffect({ x: boss.x, y: boss.y - 60, text: 'Boss Pulau Muncul!', life: 180, type: 'powerParticle' });
+                }
+            }
+
+            // Camera: deadzone radius around player
+            const targetX = player.x;
+            const targetY = player.y;
+            // Compute delta from camera center to player
+            const dx = targetX - camera.x;
+            const dy = targetY - camera.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > camera.radius) {
+                // move camera towards player but keep outside deadzone by lerping
+                const angle = Math.atan2(dy, dx);
+                const desiredX = targetX - Math.cos(angle) * camera.radius;
+                const desiredY = targetY - Math.sin(angle) * camera.radius;
+                camera.x += (desiredX - camera.x) * camera.lerp;
+                camera.y += (desiredY - camera.y) * camera.lerp;
+            } else {
+                // small smoothing even when inside deadzone to avoid jitter
+                camera.x += dx * (camera.lerp * 0.25);
+                camera.y += dy * (camera.lerp * 0.25);
+            }
+
+            // Clamp camera to world bounds so it doesn't show outside world
+            const halfW = canvas.width / 2;
+            const halfH = canvas.height / 2;
+            camera.x = Math.max(halfW, Math.min(GAME_WIDTH - halfW, camera.x));
+            camera.y = Math.max(halfH, Math.min(GAME_HEIGHT - halfH, camera.y));
+
+            // Draw background and world translated by camera (with optional shake)
+            // small camera shake support: camera.shakeTime (frames), camera.shakeMag (pixels)
+            let _shakeX = 0, _shakeY = 0;
+            if (camera.shakeTime && camera.shakeTime > 0) {
+                _shakeX = (Math.random() - 0.5) * camera.shakeMag;
+                _shakeY = (Math.random() - 0.5) * camera.shakeMag;
+                camera.shakeTime = Math.max(0, camera.shakeTime - 1);
+                // decay magnitude slowly
+                camera.shakeMag *= 0.92;
+            }
+            ctx.save();
+            ctx.translate(-Math.floor(camera.x - halfW) + Math.floor(_shakeX), -Math.floor(camera.y - halfH) + Math.floor(_shakeY));
+
+            // Draw background (world space)
+            drawBackground();
+
+            // Draw game objects (world space draw calls)
+            portals.forEach(portal => portal.draw());
+            fruits.forEach(fruit => fruit.draw());
+            droppedItems.forEach(item => item.draw());
+            enemies.forEach(enemy => enemy.draw());
+            projectiles.forEach(projectile => projectile.draw());
+            player.draw();
+            Voyage.drawUltimateEffects(ctx);
+            // Arena draw hook
+            try { if (typeof ArenaManager !== 'undefined' && ArenaManager.active) ArenaManager.draw(); } catch (e) { console.error('ArenaManager.draw error', e); }
+            // Effects are also world-space
+            // Draw special attack visuals (world-space) before generic effects
+            specialAttacks.forEach(sa => { try { if (sa.draw) sa.draw(ctx); } catch (e) { /* ignore */ } });
+            drawEffects();
+
+            // Draw boss-owned telegraphs (stored in enemy._telegraphs)
+            enemies.forEach(enemy => {
+                if (!enemy._telegraphs || enemy._telegraphs.length === 0) return;
+                enemy._telegraphs.forEach(t => {
+                    if (!t) return;
+                    ctx.save();
+                    const alpha = Math.max(0.05, Math.min(1, t.life / 50));
+                    if (t.type === 'telegraphCircle') {
+                        ctx.strokeStyle = t.color || '#ff4444';
+                        ctx.lineWidth = 3;
+                        ctx.globalAlpha = alpha;
+                        ctx.beginPath();
+                        ctx.arc(t.x, t.y, t.radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                    } else if (t.type === 'telegraphLine') {
+                        ctx.strokeStyle = t.color || '#ffffff';
+                        ctx.lineWidth = 6;
+                        ctx.globalAlpha = alpha;
+                        ctx.beginPath();
+                        ctx.moveTo(t.x, t.y);
+                        ctx.lineTo(t.x + Math.cos(t.angle) * t.length, t.y + Math.sin(t.angle) * t.length);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                });
+            });
+
+            ctx.restore();
+
+            // --- Temp Lightnings (Kirin ult visuals) and Screen Flash (screen-space) ---
+            try {
+                // Draw temp lightnings in screen-space (they were pushed with screen coords)
+                for (let i = tempLightnings.length - 1; i >= 0; i--) {
+                    const l = tempLightnings[i];
+                    try {
+                        drawLightning(l.x1, l.y1, l.x2, l.y2, '#ffffff', 4);
+                        drawLightning(l.x1, l.y1, l.x2, l.y2, '#63b3ed', 8);
+                    } catch (e) {}
+                    l.life--;
+                    if (l.life <= 0) tempLightnings.splice(i, 1);
+                }
+
+                // Screen flash overlay
+                if (screenFlash > 0) {
+                    ctx.save();
+                    ctx.fillStyle = `rgba(255,255,255,${Math.max(0, Math.min(1, screenFlash))})`;
+                    ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+                    ctx.restore();
+                    screenFlash -= 0.1;
+                    if (screenFlash < 0) screenFlash = 0;
+                }
+            } catch (e) { /* ignore render errors */ }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Application shell and controls are initialized by voyage.js.

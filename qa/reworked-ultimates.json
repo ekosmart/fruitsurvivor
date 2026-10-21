@@ -1,0 +1,61 @@
+{
+  "ok": true,
+  "fruits": [
+    {
+      "fruit": "QUETZALCOATL",
+      "cooldown": 24000,
+      "name": "Feathered Serpent Dominion"
+    },
+    {
+      "fruit": "PHOENIX",
+      "cooldown": 14000,
+      "name": "Rebirth Dive"
+    },
+    {
+      "fruit": "SABERTOOTH",
+      "cooldown": 11000,
+      "name": "Predator Execution"
+    },
+    {
+      "fruit": "TRICERATOPS",
+      "cooldown": 14000,
+      "name": "Ironhorn Stampede"
+    },
+    {
+      "fruit": "DRAGON",
+      "cooldown": 12000,
+      "name": "Dragon’s Breath"
+    },
+    {
+      "fruit": "AZURE_DRAGON",
+      "cooldown": 24000,
+      "name": "Heavenly Dragon Descent"
+    },
+    {
+      "fruit": "KIRIN",
+      "cooldown": 18000,
+      "name": "Celestial Thunder Run"
+    },
+    {
+      "fruit": "ORIGIN",
+      "cooldown": 22000,
+      "name": "Genesis Reset"
+    }
+  ],
+  "checks": [
+    "phase damage",
+    "real movement",
+    "guard cleanup",
+    "poison",
+    "healing",
+    "swept charge hits",
+    "directional breath",
+    "lingering ground damage",
+    "lightning stun",
+    "player-only cleanse",
+    "hostile projectile purge",
+    "pause/resume",
+    "island cleanup",
+    "world boundaries"
+  ]
+}

@@ -1,0 +1,380 @@
+{
+  "ok": true,
+  "source": "references/ultimate-source.html",
+  "results": [
+    {
+      "fruit": "LIGHTNING",
+      "cooldown": 14000,
+      "ultimate": "Judgment Bolt"
+    },
+    {
+      "fruit": "DRAGON",
+      "cooldown": 12000,
+      "ultimate": "Dragon’s Breath"
+    },
+    {
+      "fruit": "ICE",
+      "cooldown": 1000,
+      "ultimate": "Ice Shard"
+    },
+    {
+      "fruit": "RUBBER",
+      "cooldown": 3500,
+      "ultimate": "Gear 4: Kong Organ"
+    },
+    {
+      "fruit": "BLACKHOLE",
+      "cooldown": 2000,
+      "ultimate": "Black Hole"
+    },
+    {
+      "fruit": "SHADOW",
+      "cooldown": 1500,
+      "ultimate": "Shadow Orbs"
+    },
+    {
+      "fruit": "VOID_REAPER",
+      "cooldown": 6000,
+      "ultimate": "Death Harvest"
+    },
+    {
+      "fruit": "PHOENIX",
+      "cooldown": 14000,
+      "ultimate": "Rebirth Dive"
+    },
+    {
+      "fruit": "SIREN",
+      "cooldown": 2200,
+      "ultimate": "Song of Lure"
+    },
+    {
+      "fruit": "TIDE",
+      "cooldown": 2500,
+      "ultimate": "Tidal Surge"
+    },
+    {
+      "fruit": "SEA_KING",
+      "cooldown": 4000,
+      "ultimate": "Tsunami Sweep"
+    },
+    {
+      "fruit": "JACKPOT",
+      "cooldown": 10000,
+      "ultimate": "777 Fever"
+    },
+    {
+      "fruit": "HELLGOD",
+      "cooldown": 5000,
+      "ultimate": "Inferno Field"
+    },
+    {
+      "fruit": "ROSE_THORN",
+      "cooldown": 2000,
+      "ultimate": "Thorn Orbit"
+    },
+    {
+      "fruit": "MAGNETION",
+      "cooldown": 2600,
+      "ultimate": "Magnetic Pull"
+    },
+    {
+      "fruit": "SWORD_DEITY",
+      "cooldown": 3600,
+      "ultimate": "Seven Heavenly Blades"
+    },
+    {
+      "fruit": "COLOSSUS",
+      "cooldown": 3000,
+      "ultimate": "Earth Slam"
+    },
+    {
+      "fruit": "MIRAGE",
+      "cooldown": 3000,
+      "ultimate": "Mirage Field"
+    },
+    {
+      "fruit": "VOLCANO",
+      "cooldown": 4000,
+      "ultimate": "Eruption Burst"
+    },
+    {
+      "fruit": "CELESTIAL",
+      "cooldown": 2000,
+      "ultimate": "Starfall"
+    },
+    {
+      "fruit": "DOLL",
+      "cooldown": 3500,
+      "ultimate": "Marionette Strings"
+    },
+    {
+      "fruit": "SINGULARITY",
+      "cooldown": 4200,
+      "ultimate": "Singularity"
+    },
+    {
+      "fruit": "AURORA",
+      "cooldown": 1600,
+      "ultimate": "Aurora Wave"
+    },
+    {
+      "fruit": "QUASAR",
+      "cooldown": 1400,
+      "ultimate": "Quasar Blast"
+    },
+    {
+      "fruit": "ORIGIN",
+      "cooldown": 22000,
+      "ultimate": "Genesis Reset"
+    },
+    {
+      "fruit": "NEBULA",
+      "cooldown": 2000,
+      "ultimate": "Nebula Mist"
+    },
+    {
+      "fruit": "SERAPH",
+      "cooldown": 5000,
+      "ultimate": "Divine Intervention — Elysium Field"
+    },
+    {
+      "fruit": "PRISM",
+      "cooldown": 2200,
+      "ultimate": "Prismatic Chains"
+    },
+    {
+      "fruit": "HITO_HITO_DEWI",
+      "cooldown": 6000,
+      "ultimate": "Love Goddess"
+    },
+    {
+      "fruit": "HITO_MECHA",
+      "cooldown": 8000,
+      "ultimate": "Sky Barrage Protocol"
+    },
+    {
+      "fruit": "BLOOM",
+      "cooldown": 5000,
+      "ultimate": "Carnivorous Garden"
+    },
+    {
+      "fruit": "ECHO",
+      "cooldown": 2600,
+      "ultimate": "Echo Wave"
+    },
+    {
+      "fruit": "MAMMOTH",
+      "cooldown": 5000,
+      "ultimate": "Mammoth Charge"
+    },
+    {
+      "fruit": "SABERTOOTH",
+      "cooldown": 11000,
+      "ultimate": "Predator Execution"
+    },
+    {
+      "fruit": "PTERODACTYL",
+      "cooldown": 6000,
+      "ultimate": "Sky Dive"
+    },
+    {
+      "fruit": "TRICERATOPS",
+      "cooldown": 14000,
+      "ultimate": "Ironhorn Stampede"
+    },
+    {
+      "fruit": "VELOCIRAPTOR",
+      "cooldown": 3000,
+      "ultimate": "Raptor Pack"
+    },
+    {
+      "fruit": "KIRIN",
+      "cooldown": 18000,
+      "ultimate": "Celestial Thunder Run"
+    },
+    {
+      "fruit": "GRIFFIN",
+      "cooldown": 3000,
+      "ultimate": "Griffin Dive"
+    },
+    {
+      "fruit": "GARUDA",
+      "cooldown": 3000,
+      "ultimate": "Sky Cyclone"
+    },
+    {
+      "fruit": "FENRIR",
+      "cooldown": 1000,
+      "ultimate": "World-shaking Howl"
+    },
+    {
+      "fruit": "QUETZALCOATL",
+      "cooldown": 24000,
+      "ultimate": "Feathered Serpent Dominion"
+    },
+    {
+      "fruit": "BAKU",
+      "cooldown": 1000,
+      "ultimate": "Nightmare Eater"
+    },
+    {
+      "fruit": "AZURE_DRAGON",
+      "cooldown": 24000,
+      "ultimate": "Heavenly Dragon Descent"
+    },
+    {
+      "fruit": "GRAVITY",
+      "cooldown": 2500,
+      "ultimate": "Gravity Meteors"
+    },
+    {
+      "fruit": "SUN_GOD",
+      "cooldown": 5000,
+      "ultimate": "Sun God — Boss Skill"
+    },
+    {
+      "fruit": "ZENITH_URSAGAR",
+      "cooldown": 5000,
+      "ultimate": "Astral Maul"
+    },
+    {
+      "fruit": "CAPTAIN_HOOK",
+      "cooldown": 5000,
+      "ultimate": "Grapnel King"
+    },
+    {
+      "fruit": "STARTER_GUARDIAN",
+      "cooldown": 4000,
+      "ultimate": "STARTER GUARDIAN — Boss Skill"
+    },
+    {
+      "fruit": "KING_GLUTTONOUS",
+      "cooldown": 4000,
+      "ultimate": "KING GLUTTONOUS — Boss Skill"
+    },
+    {
+      "fruit": "DEITY_VOLT",
+      "cooldown": 4000,
+      "ultimate": "DEITY VOLT — Boss Skill"
+    },
+    {
+      "fruit": "MERMAN_TYRANT",
+      "cooldown": 4000,
+      "ultimate": "MERMAN TYRANT — Boss Skill"
+    },
+    {
+      "fruit": "LEVIATHAN_VENA",
+      "cooldown": 4000,
+      "ultimate": "LEVIATHAN VENA — Boss Skill"
+    },
+    {
+      "fruit": "MADAM_THORNY",
+      "cooldown": 4000,
+      "ultimate": "MADAM THORNY — Boss Skill"
+    },
+    {
+      "fruit": "GIANT_BRUTE",
+      "cooldown": 4000,
+      "ultimate": "GIANT BRUTE — Boss Skill"
+    },
+    {
+      "fruit": "KING_GLUTTONOUS_II",
+      "cooldown": 4000,
+      "ultimate": "KING GLUTTONOUS II — Boss Skill"
+    },
+    {
+      "fruit": "LORD_DRYROC",
+      "cooldown": 4000,
+      "ultimate": "LORD DRYROC — Boss Skill"
+    },
+    {
+      "fruit": "SQUIRE_QUAKE",
+      "cooldown": 4000,
+      "ultimate": "SQUIRE QUAKE — Boss Skill"
+    },
+    {
+      "fruit": "DEITY_VOLT_II",
+      "cooldown": 4000,
+      "ultimate": "DEITY VOLT II — Boss Skill"
+    },
+    {
+      "fruit": "IRON_DOCK_WORKER",
+      "cooldown": 4000,
+      "ultimate": "IRON DOCK WORKER — Boss Skill"
+    },
+    {
+      "fruit": "CIPHER_ELITE_NINE",
+      "cooldown": 4000,
+      "ultimate": "CIPHER ELITE NINE — Boss Skill"
+    },
+    {
+      "fruit": "ADMIRAL_FROSTBITE",
+      "cooldown": 4000,
+      "ultimate": "ADMIRAL FROSTBITE — Boss Skill"
+    },
+    {
+      "fruit": "SNAKE_QUEEN_HAN",
+      "cooldown": 4000,
+      "ultimate": "SNAKE QUEEN HAN — Boss Skill"
+    },
+    {
+      "fruit": "WARDEN_TOXICOUS",
+      "cooldown": 4000,
+      "ultimate": "WARDEN TOXICOUS — Boss Skill"
+    },
+    {
+      "fruit": "GRAND_ADMIRAL_VULCAN",
+      "cooldown": 4000,
+      "ultimate": "GRAND ADMIRAL VULCAN — Boss Skill"
+    },
+    {
+      "fruit": "MERMAN_TYRANT_II",
+      "cooldown": 4000,
+      "ultimate": "MERMAN TYRANT II — Boss Skill"
+    },
+    {
+      "fruit": "SCIENTIST_V_SMOKE",
+      "cooldown": 4000,
+      "ultimate": "SCIENTIST V SMOKE — Boss Skill"
+    },
+    {
+      "fruit": "WARLORD_SENOR_STRING",
+      "cooldown": 4000,
+      "ultimate": "WARLORD SENOR STRING — Boss Skill"
+    },
+    {
+      "fruit": "TUSK_GENERAL",
+      "cooldown": 4000,
+      "ultimate": "TUSK GENERAL — Boss Skill"
+    },
+    {
+      "fruit": "EMPRESS_MOTHER",
+      "cooldown": 4000,
+      "ultimate": "EMPRESS MOTHER — Boss Skill"
+    },
+    {
+      "fruit": "OVERLORD_DRAGON",
+      "cooldown": 4000,
+      "ultimate": "OVERLORD DRAGON — Boss Skill"
+    },
+    {
+      "fruit": "DR_V_TECH",
+      "cooldown": 4000,
+      "ultimate": "DR V TECH — Boss Skill"
+    },
+    {
+      "fruit": "PRINCE_GREAT_AXE",
+      "cooldown": 4000,
+      "ultimate": "PRINCE GREAT AXE — Boss Skill"
+    }
+  ],
+  "checks": [
+    "73 mappings",
+    "8.8 seconds per fruit",
+    "cooldowns",
+    "projectile/controller rendering",
+    "paused delay",
+    "stable touch aim",
+    "non-stacking transformation"
+  ]
+}
